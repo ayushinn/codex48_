@@ -1,0 +1,9 @@
+# Local tooling downloaded for building the PDF (not part of the submission)
+/tools/
+/.venv/
+
+# Freebuff project marker
+/.freebuff/
+
+# Python cache
+__pycache__/
