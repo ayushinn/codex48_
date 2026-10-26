@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #10151c;
+  --color-ink-soft: #4a5462;
+  --color-paper: #f7f7f5;
+  --color-line: #e3e5ea;
+  --color-accent: #1d4ed8;
+  --color-blocker: #b91c1c;
+  --color-warn: #b45309;
+  --color-info: #0369a1;
+  --color-good: #15803d;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+:where(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.prose-draft {
+  white-space: pre-wrap;
+  line-height: 1.7;
+}
+
+.draft-mark {
+  background: #fde8e8;
+  box-shadow: inset 0 -2px 0 #b91c1c;
+  border-radius: 2px;
+}
+.draft-mark-warn {
+  background: #fdf1dd;
+  box-shadow: inset 0 -2px 0 #b45309;
+  border-radius: 2px;
+}
+.draft-mark-info {
+  background: #e3f0fa;
+  box-shadow: inset 0 -2px 0 #0369a1;
+  border-radius: 2px;
+}
+.draft-mark:hover {
+  filter: brightness(0.97);
+}
