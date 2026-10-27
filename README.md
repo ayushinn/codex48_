@@ -105,6 +105,11 @@ Any Node host works (Vercel/Netlify): `npm ci && npm run build && npm run start`
   seeds itself, but on serverless hosts the database lives in `/tmp` and resets on cold starts.
 - No sign-in is required to open the product — open it in a private window and it works.
 
+## Repository contents
+
+- `SUBMISSION.md` — the Round 2 submission material (features, tech, plan changes, Round 3 improvements)
+- `ROUND1.md` + `round1-plan.typ` + `round1-submission.pdf` + `artifacts/` — the Round 1 plan and its sources
+
 ## Honesty notes
 
 - No finding is auto-applied; a human accept is the only thing that changes content.
