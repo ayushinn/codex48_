@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import {
+  auditLog,
   channels,
   clauses,
+  comments,
   facts,
   findings,
   guidelineVersions,
   reviews,
+  revisions,
   terms,
   toneExamples,
   workspaces,
@@ -512,7 +515,7 @@ export async function seedDemoWorkspace(db: DB): Promise<void> {
   }
 
   for (const spec of SEED_REVIEWS) {
-    const reviewId = randomUUID();
+    const reviewId = spec.key;
     await db.insert(reviews).values({
       id: reviewId,
       workspaceId: WS,
@@ -580,16 +583,40 @@ export async function seedDemoWorkspace(db: DB): Promise<void> {
       ]);
     }
 
-    // Backdate workflow timestamps so cycle-time insights are meaningful.
+    // Backdate workflow timestamps so cycle-time insights are authentic and meaningful.
     const age = isoDaysAgo(spec.ageDays ?? 0);
     const patch: Partial<typeof reviews.$inferInsert> = { createdAt: age, updatedAt: age };
-    if (spec.targetStatus !== "SELF_REVIEW") {
-      patch.submittedAt = new Date(age.getTime() + 30 * 60_000);
-      patch.decidedAt = new Date(age.getTime() + 3 * 3600_000);
-      patch.approvedAt = new Date(age.getTime() + 4 * 3600_000);
-      await db.update(reviews).set(patch).where(eq(reviews.id, reviewId));
+    if (spec.targetStatus === "READY_FOR_REVIEW") {
+      patch.submittedAt = new Date(age.getTime() + 2 * 3600_000);
+      patch.decidedAt = null;
+      patch.approvedAt = null;
+    } else if (spec.targetStatus === "PUBLISH_READY") {
+      const submitOffsetHours = 1 + (spec.ageDays % 3);
+      const cycleHours = 2.4 + (spec.ageDays % 4) * 0.6;
+      patch.submittedAt = new Date(age.getTime() + submitOffsetHours * 3600_000);
+      patch.decidedAt = new Date(patch.submittedAt.getTime() + Math.round(cycleHours * 3600_000));
+      patch.approvedAt = patch.decidedAt;
     } else {
-      await db.update(reviews).set(patch).where(eq(reviews.id, reviewId));
+      patch.submittedAt = null;
+      patch.decidedAt = null;
+      patch.approvedAt = null;
     }
+    await db.update(reviews).set(patch).where(eq(reviews.id, reviewId));
   }
+}
+
+export async function resetDemoWorkspace(db: DB): Promise<void> {
+  await db.delete(findings);
+  await db.delete(comments);
+  await db.delete(revisions);
+  await db.delete(auditLog);
+  await db.delete(reviews);
+  await db.delete(clauses);
+  await db.delete(guidelineVersions);
+  await db.delete(terms);
+  await db.delete(facts);
+  await db.delete(channels);
+  await db.delete(toneExamples);
+  await db.delete(workspaces);
+  await seedDemoWorkspace(db);
 }

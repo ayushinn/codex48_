@@ -300,6 +300,10 @@ async function main() {
     `status=${page.status}`,
   );
 
+  // 12. Cleanup: delete the test review so tests never pollute demo data
+  const del = await api(`/api/reviews/${reviewId}`, { method: "DELETE", cookie });
+  check("e2e test review cleaned up", del.status === 200, `status=${del.status}`);
+
   finish();
 }
 

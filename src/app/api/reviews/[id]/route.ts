@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { asc, eq } from "drizzle-orm";
-import { comments, findings, reviews } from "@/lib/db/schema";
+import { auditLog, comments, findings, reviews, revisions } from "@/lib/db/schema";
 import { ensureDb } from "@/lib/db";
 import { getPersonaFromCookie } from "@/lib/session";
 import { ACTIONS, type Status } from "@/lib/workflow";
@@ -35,4 +35,25 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     },
     { headers: { "cache-control": "no-store" } },
   );
+}
+
+/** Delete a review and its associated findings, comments, revisions, and audit records. */
+export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const { id } = await ctx.params;
+  const { db } = await ensureDb();
+  const persona = await getPersonaFromCookie();
+  if (!["creator", "manager", "admin"].includes(persona.role)) {
+    return NextResponse.json({ error: "This role cannot delete reviews." }, { status: 403 });
+  }
+
+  const review = (await db.select().from(reviews).where(eq(reviews.id, id)))[0];
+  if (!review) return NextResponse.json({ error: "Review not found." }, { status: 404 });
+
+  await db.delete(findings).where(eq(findings.reviewId, id));
+  await db.delete(comments).where(eq(comments.reviewId, id));
+  await db.delete(revisions).where(eq(revisions.reviewId, id));
+  await db.delete(auditLog).where(eq(auditLog.reviewId, id));
+  await db.delete(reviews).where(eq(reviews.id, id));
+
+  return NextResponse.json({ ok: true, deletedId: id });
 }
