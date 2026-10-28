@@ -9,7 +9,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "e2e": "tsx scripts/e2e.ts"
+    "e2e": "tsx scripts/e2e.ts",
+    "clean-db": "tsx scripts/clean-db.ts --confirm"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.3.14",

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { asc, eq } from "drizzle-orm";
-import { auditLog, comments, findings, reviews, revisions } from "@/lib/db/schema";
+import { comments, findings, reviews, revisions } from "@/lib/db/schema";
 import { ensureDb } from "@/lib/db";
 import { getPersonaFromCookie } from "@/lib/session";
 import { ACTIONS, type Status } from "@/lib/workflow";
@@ -37,7 +37,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   );
 }
 
-/** Delete a review and its associated findings, comments, revisions, and audit records. */
+/** Delete a review and its findings, comments, and revisions. Audit records are preserved (append-only). */
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const { db } = await ensureDb();
@@ -52,7 +52,6 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
   await db.delete(findings).where(eq(findings.reviewId, id));
   await db.delete(comments).where(eq(comments.reviewId, id));
   await db.delete(revisions).where(eq(revisions.reviewId, id));
-  await db.delete(auditLog).where(eq(auditLog.reviewId, id));
   await db.delete(reviews).where(eq(reviews.id, id));
 
   return NextResponse.json({ ok: true, deletedId: id });

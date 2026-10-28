@@ -591,8 +591,8 @@ export async function seedDemoWorkspace(db: DB): Promise<void> {
       patch.decidedAt = null;
       patch.approvedAt = null;
     } else if (spec.targetStatus === "PUBLISH_READY") {
-      const submitOffsetHours = 1 + (spec.ageDays % 3);
-      const cycleHours = 2.4 + (spec.ageDays % 4) * 0.6;
+      const submitOffsetHours = 1 + ((spec.ageDays ?? 1) % 3);
+      const cycleHours = 2.4 + ((spec.ageDays ?? 1) % 4) * 0.6;
       patch.submittedAt = new Date(age.getTime() + submitOffsetHours * 3600_000);
       patch.decidedAt = new Date(patch.submittedAt.getTime() + Math.round(cycleHours * 3600_000));
       patch.approvedAt = patch.decidedAt;

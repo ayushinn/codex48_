@@ -9,9 +9,7 @@ Team: ayushiupadhyay818 · Leader: Ayushi Upadhyay (sole member, ayushiupadhyay8
 ## 1. Links
 
 - **Working project link:** https://site-23a0517a0f274928a6afc55dce23e316.freebuff.page (opens in a private window, no sign-in)
-- **Source-code repository:** https://github.com/ayushinn/codex48_ (must be flipped to
-  **public** before filing — judges must open it without signing in; no secrets are committed
-  and `.env` is gitignored)
+- **Source-code repository:** https://github.com/ayushinn/codex48_ (public repository — no secrets committed, `.env` is gitignored)
 - **Updated project PDF:** `round2-plan.pdf` — Round 2: The Build (source: `round2-plan.typ`;
   Round 1 plan remains `round1-submission.pdf` / `round1-plan.typ`)
 - **Completed features:** Section 2 below

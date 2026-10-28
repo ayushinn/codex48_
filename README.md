@@ -92,7 +92,7 @@ Key properties:
 
 ## Stack
 
-Next.js 15 (App Router, route handlers) · React 19 · TypeScript · Tailwind CSS 4 ·
+Next.js 16 (App Router, route handlers) · React 19 · TypeScript · Tailwind CSS 4 ·
 Drizzle ORM · PostgreSQL (Neon in production, embedded PGlite locally) · Zod ·
 mammoth (DOCX) · unpdf (PDF) · provider-agnostic OpenAI-compatible AI adapter ·
 Vitest (unit) + fetch-based HTTP e2e suite.
