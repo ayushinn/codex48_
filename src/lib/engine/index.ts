@@ -184,6 +184,13 @@ export async function runPreflight(
     (f) => f.state !== "open",
   );
 
+  // Open findings are replaced wholesale: delete them before inserting the fresh set.
+  // Inserting first would leave the previous run's open row in place, so every re-run
+  // would add a second row for the same clause+quote (and its stale "why").
+  for (const f of openExisting) {
+    await db.delete(findings).where(eq(findings.id, f.id));
+  }
+
   let carried = 0;
   let seq = survivors.length;
   for (const v of verified) {
@@ -216,18 +223,6 @@ export async function runPreflight(
       verifier: "verified",
       isBlocker: v.severity === "blocker",
     });
-  }
-
-  // Replace any still-open findings with the fresh set
-  const toDelete = (await db.select().from(findings).where(eq(findings.reviewId, review.id))).filter(
-    (f) => f.state === "open",
-  );
-  for (const f of toDelete) {
-    const key = `${f.clauseCode}::${normalize(f.quote ?? "append")}`;
-    const stillVerified = verified.some(
-      (v) => `${v.clause.code}::${normalize(v.candidate.quote ?? "append")}` === key,
-    );
-    if (!stillVerified) await db.delete(findings).where(eq(findings.id, f.id));
   }
 
   const engine = {

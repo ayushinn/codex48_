@@ -435,7 +435,7 @@ function checkAccessibility(ctx: Ctx): Candidate[] {
       clauseCode: altClause.code,
       why: `The image ${problem}. ${altClause.code} requires alt text of at least ${minAlt} characters describing the image's content.`,
       quote: block.text,
-      suggestion: proposed ? block.text.replace(/^!\[[^\]]*\]/, `![${proposed}`) : undefined,
+      suggestion: proposed ? block.text.replace(/^!\[[^\]]*\]/, `![${proposed}]`) : undefined,
       confidence: "high",
     });
   }

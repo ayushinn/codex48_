@@ -1,17 +1,19 @@
 # Preflight — Round 2 submission material
 
-Team: ___________ · Leader: ___________ · Codex 48, Round 2 (26–28 October)
+Team: ayushiupadhyay818 · Leader: Ayushi Upadhyay (sole member, ayushiupadhyay818@gmail.com) · Codex 48, Round 2 (26–28 October)
 
-> Fill the four placeholders before filing: project link, repository link, updated PDF path,
-> and team details. Everything else is written to be filed as-is.
+> **All filled:** repository link (verified public), team details, project link (live preview with Neon Postgres), and updated PDF path (`round2-plan.pdf`, built from `round2-plan.typ`).
 
 ---
 
 ## 1. Links
 
-- **Working project link:** ______________________ (opens in a private window, no sign-in)
-- **Source-code repository:** ______________________
-- **Updated project PDF:** ______________________ (Round 1 plan + this round's changes)
+- **Working project link:** https://site-23a0517a0f274928a6afc55dce23e316.freebuff.page (opens in a private window, no sign-in)
+- **Source-code repository:** https://github.com/ayushinn/codex48_ (must be flipped to
+  **public** before filing — judges must open it without signing in; no secrets are committed
+  and `.env` is gitignored)
+- **Updated project PDF:** `round2-plan.pdf` — Round 2: The Build (source: `round2-plan.typ`;
+  Round 1 plan remains `round1-submission.pdf` / `round1-plan.typ`)
 - **Completed features:** Section 2 below
 - **Technology and implementation:** Section 3 below
 - **Changes from the original plan:** Section 4 below
@@ -49,16 +51,17 @@ verbatim clause, diff) → accept / edit / dismiss with a reason → clear all b
 switch persona to Manager → approve → export the approval record → see the dismissal cluster in
 Insights. Every step above is exercised by the automated suite in `scripts/e2e.ts`.
 
-**Verification run for this build:** `npm run build` clean · `npm test` 12/12 unit tests ·
-`npm run e2e` 35/35 HTTP checks (including unauthenticated page renders, refusal of
-dismissal-without-reason, refusal of self-approval, 409 on illegal transitions, verifier
-behaviour, and export with disclosure footnote).
+**Verification run for this build:** `npm run build` clean · `npm run typecheck` clean ·
+`npm test` 14/14 unit tests · `npm run e2e` 35/35 HTTP checks (including unauthenticated page
+renders, refusal of dismissal-without-reason, refusal of self-approval, 409 on illegal
+transitions, verifier behaviour, re-run reconciliation without duplicate findings, and export
+with disclosure footnote).
 
 ---
 
 ## 3. Technology and implementation
 
-- **Language/framework:** TypeScript end-to-end; Next.js 15 App Router (server components +
+- **Language/framework:** TypeScript end-to-end; Next.js 16 App Router (server components +
   route handlers), React 19, Tailwind CSS 4. One codebase, one deploy.
 - **Database:** PostgreSQL with Drizzle ORM — one schema, dual driver: Neon serverless
   Postgres when `DATABASE_URL` is set (production), embedded PGlite (file-backed Postgres) with
@@ -86,8 +89,10 @@ behaviour, and export with disclosure footnote).
   checks behave identically regardless of source format. Image metadata (palette, measured
   contrast) is computed in the browser at intake and checked against the approved palette.
 - **Testing:** Vitest unit suite (`tests/engine.test.ts` — verifier accept/reject paths, span
-  locating, protected verbatim phrases, imported-guideline fallback) plus a fetch-based HTTP
-  end-to-end suite (`scripts/e2e.ts`, 35 assertions over the full workflow).
+  locating, protected verbatim phrases, imported-guideline fallback, image accessibility:
+  valid markdown alt suggestions and the WCAG contrast threshold) plus a fetch-based HTTP
+  end-to-end suite (`scripts/e2e.ts`, 35 assertions over the full workflow, including that
+  re-running preflight replaces open findings instead of duplicating them).
 
 ---
 

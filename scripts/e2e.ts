@@ -267,6 +267,14 @@ async function main() {
     acceptedAfter.every((f: any) => !f.quote || afterRerun.json.review.content.includes(f.quote)),
     JSON.stringify(acceptedAfter.map((f: any) => f.quote?.slice(0, 30))),
   );
+  const openKeys = (afterRerun.json?.findings ?? [])
+    .filter((f: any) => f.state === "open")
+    .map((f: any) => `${f.clauseCode}::${f.quote ?? "append"}`);
+  check(
+    "re-run replaces open findings instead of duplicating them",
+    new Set(openKeys).size === openKeys.length,
+    `open=${openKeys.length} unique=${new Set(openKeys).size}`,
+  );
 
   // 9. Insights data exists
   const insights = await fetch(`${BASE}/insights`);

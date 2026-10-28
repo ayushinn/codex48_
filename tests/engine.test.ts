@@ -218,3 +218,62 @@ describe("imported guideline (pasted, auto-coded clauses)", () => {
     expect(flags.every((f) => imported.some((c) => c.code === f.clauseCode))).toBe(true);
   });
 });
+
+describe("image accessibility", () => {
+  const channel = {
+    id: "ch_3",
+    workspaceId: "ws_1",
+    key: "social",
+    name: "Social",
+    maxChars: null,
+    minWords: null,
+    rules: {},
+  } as Channel;
+
+  it("flags a missing alt and suggests valid markdown", () => {
+    const ctx = buildCtx({
+      content: "Weekend note for the feed.\n\n![](spring-sale.jpg)",
+      channel,
+      clauses: [
+        clause({
+          code: "GB-4-1",
+          body: "Alt text of at least 24 characters is required on every image.",
+          ruleType: "policy",
+          checkGroup: "accessibility",
+        }),
+      ],
+      terms: [] as Term[],
+      facts: [] as Fact[],
+      toneExamples: [],
+      images: [],
+      palette: [],
+    });
+    const alt = runRuleChecks(ctx).filter((f) => f.checkGroup === "accessibility");
+    expect(alt.length).toBe(1);
+    // The suggestion must itself be parseable markdown: ![alt](src)
+    expect(alt[0].suggestion).toBe("![Spring sale](spring-sale.jpg)");
+  });
+
+  it("flags attached images below the WCAG contrast threshold", () => {
+    const ctx = buildCtx({
+      content: "Weekend note for the feed.",
+      channel,
+      clauses: [
+        clause({
+          code: "GB-4-2",
+          body: "Text over an image must meet 4.5:1 contrast.",
+          ruleType: "policy",
+          checkGroup: "accessibility",
+        }),
+      ],
+      terms: [] as Term[],
+      facts: [] as Fact[],
+      toneExamples: [],
+      images: [{ id: "img_1", name: "flat.png", alt: "", palette: [], contrastRatio: 2.1 }],
+      palette: [],
+    });
+    const contrast = runRuleChecks(ctx).filter((f) => f.why.includes("contrast"));
+    expect(contrast.length).toBe(1);
+    expect(contrast[0].why).toContain("2.10:1");
+  });
+});
