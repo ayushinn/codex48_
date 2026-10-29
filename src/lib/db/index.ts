@@ -18,23 +18,38 @@ export type DB = PgliteDatabase<typeof schema>;
  *                         and a functional ephemeral fallback in /tmp when the
  *                         app is deployed without a database configured)
  */
+function createPglite(): PGlite {
+  // Cloudflare Workers / some serverless runtimes have no durable filesystem.
+  // In-memory PGlite still seeds a working demo per isolate.
+  const forceMemory =
+    process.env.PGLITE_MEMORY === "1" ||
+    Boolean(process.env.CF_PAGES) ||
+    Boolean(process.env.OPEN_NEXT_CLOUDFLARE);
+  if (forceMemory) {
+    return new PGlite();
+  }
+  const dir =
+    process.env.PGLITE_DIR ??
+    (process.env.VERCEL ? "/tmp/preflight-pglite" : `${process.cwd()}/data/preflight`);
+  try {
+    mkdirSync(dir, { recursive: true });
+    return new PGlite(dir);
+  } catch (err) {
+    console.warn(
+      "[preflight] file-backed PGlite unavailable, using in-memory:",
+      (err as Error).message,
+    );
+    return new PGlite();
+  }
+}
+
 function createDb(): DB {
   const url = process.env.DATABASE_URL;
   if (url) {
     const sqlClient = neon(url);
     return drizzleNeon(sqlClient, { schema }) as unknown as DB;
   }
-  const dir =
-    process.env.PGLITE_DIR ??
-    (process.env.VERCEL ? "/tmp/preflight-pglite" : `${process.cwd()}/data/preflight`);
-  // PGlite expects its parent directory to exist.
-  try {
-    mkdirSync(dir, { recursive: true });
-  } catch (err) {
-    console.warn("[preflight] could not create the local data directory:", (err as Error).message);
-  }
-  const pglite = new PGlite(dir);
-  return drizzlePglite(pglite, { schema });
+  return drizzlePglite(createPglite(), { schema });
 }
 
 type Global = { db: DB; mode: "postgres" | "pglite"; ready: Promise<void> | null };

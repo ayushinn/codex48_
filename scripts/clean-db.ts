@@ -9,7 +9,7 @@
  *
  * Usage (local PGlite only):
  *   npx tsx scripts/clean-db.ts --confirm
- *   npm run clean-db          ← runs the above via package.json
+ *   npm run clean-db -- --confirm   ← confirmation must be passed explicitly
  */
 
 import { PGlite } from "@electric-sql/pglite";
