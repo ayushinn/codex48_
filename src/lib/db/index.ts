@@ -55,9 +55,26 @@ function createDb(): DB {
 type Global = { db: DB; mode: "postgres" | "pglite"; ready: Promise<void> | null };
 const g = globalThis as unknown as { __preflightDb?: Global };
 
+/** True when the tables are already there (one cheap query, no writes). */
+async function schemaPresent(db: DB): Promise<boolean> {
+  try {
+    await db.select().from(schema.workspaces).limit(1);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function bootstrap(db: DB, mode: "postgres" | "pglite"): Promise<void> {
-  for (const statement of BOOTSTRAP_STATEMENTS) {
-    await db.execute(sql.raw(statement));
+  // A hosted database is migrated once. Re-running fifteen DDL statements at the
+  // start of every new serverless isolate costs fifteen network round trips
+  // before the request does any real work, which is enough to exhaust the
+  // request budget and abort a read half-way through. Probe first; migrate only
+  // when the schema is genuinely missing.
+  if (mode === "pglite" || !(await schemaPresent(db))) {
+    for (const statement of BOOTSTRAP_STATEMENTS) {
+      await db.execute(sql.raw(statement));
+    }
   }
   await seedDemoWorkspace(db);
 }

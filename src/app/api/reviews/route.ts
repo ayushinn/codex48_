@@ -109,6 +109,7 @@ export async function POST(req: Request) {
     const summary = await runPreflight(db, id, { actor: persona.name });
     return NextResponse.json({ ok: true, id, summary }, { status: 201 });
   } catch (err) {
+    console.error("[preflight] failed", err);
     return NextResponse.json(
       { ok: true, id, error: `Preflight failed: ${(err as Error).message}` },
       { status: 500 },

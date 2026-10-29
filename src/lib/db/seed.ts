@@ -453,9 +453,33 @@ async function advance(
   }
 }
 
+/** Wipe every demo row, in foreign-key-safe order. */
+async function clearDemoWorkspace(db: DB): Promise<void> {
+  await db.delete(findings);
+  await db.delete(comments);
+  await db.delete(revisions);
+  await db.delete(auditLog);
+  await db.delete(reviews);
+  await db.delete(clauses);
+  await db.delete(guidelineVersions);
+  await db.delete(terms);
+  await db.delete(facts);
+  await db.delete(channels);
+  await db.delete(toneExamples);
+  await db.delete(workspaces);
+}
+
 export async function seedDemoWorkspace(db: DB): Promise<void> {
-  const existing = await db.select().from(workspaces);
-  if (existing.length > 0) return;
+  // "Already seeded" means the finished product is there — reviews included.
+  // A seed that stops part-way (dropped connection, serverless request limit)
+  // leaves a workspace but no reviews; guarding on the workspace alone would
+  // then skip seeding forever and leave the demo as an empty shell.
+  const existingReviews = await db.select().from(reviews);
+  if (existingReviews.length > 0) return;
+  const existingWorkspaces = await db.select().from(workspaces);
+  if (existingWorkspaces.length > 0) {
+    await clearDemoWorkspace(db);
+  }
 
   const now = new Date();
   void now;
@@ -479,8 +503,11 @@ export async function seedDemoWorkspace(db: DB): Promise<void> {
     importedAt: isoDaysAgo(38),
   });
 
-  for (const c of CLAUSES) {
-    await db.insert(clauses).values({
+  // One round trip per registry rather than one per row: every insert on a
+  // hosted database is an HTTP request, and an over-long seed is what leaves
+  // the half-built workspace this function now recovers from.
+  await db.insert(clauses).values(
+    CLAUSES.map((c) => ({
       id: randomUUID(),
       guidelineVersionId: guideId,
       code: c.code,
@@ -491,16 +518,12 @@ export async function seedDemoWorkspace(db: DB): Promise<void> {
       checkGroup: c.checkGroup,
       channel: c.channel ?? null,
       config: c.config ?? {},
-    });
-  }
-  for (const t of TERMS) {
-    await db.insert(terms).values({ id: randomUUID(), workspaceId: WS, ...t });
-  }
-  for (const f of FACTS) {
-    await db.insert(facts).values({ id: randomUUID(), workspaceId: WS, ...f });
-  }
-  for (const c of CHANNELS) {
-    await db.insert(channels).values({
+    })),
+  );
+  await db.insert(terms).values(TERMS.map((t) => ({ id: randomUUID(), workspaceId: WS, ...t })));
+  await db.insert(facts).values(FACTS.map((f) => ({ id: randomUUID(), workspaceId: WS, ...f })));
+  await db.insert(channels).values(
+    CHANNELS.map((c) => ({
       id: randomUUID(),
       workspaceId: WS,
       key: c.key,
@@ -508,11 +531,9 @@ export async function seedDemoWorkspace(db: DB): Promise<void> {
       maxChars: c.maxChars ?? null,
       minWords: c.minWords ?? null,
       rules: c.rules as never,
-    });
-  }
-  for (const t of TONE) {
-    await db.insert(toneExamples).values({ id: randomUUID(), workspaceId: WS, ...t });
-  }
+    })),
+  );
+  await db.insert(toneExamples).values(TONE.map((t) => ({ id: randomUUID(), workspaceId: WS, ...t })));
 
   for (const spec of SEED_REVIEWS) {
     const reviewId = spec.key;
@@ -606,17 +627,6 @@ export async function seedDemoWorkspace(db: DB): Promise<void> {
 }
 
 export async function resetDemoWorkspace(db: DB): Promise<void> {
-  await db.delete(findings);
-  await db.delete(comments);
-  await db.delete(revisions);
-  await db.delete(auditLog);
-  await db.delete(reviews);
-  await db.delete(clauses);
-  await db.delete(guidelineVersions);
-  await db.delete(terms);
-  await db.delete(facts);
-  await db.delete(channels);
-  await db.delete(toneExamples);
-  await db.delete(workspaces);
+  await clearDemoWorkspace(db);
   await seedDemoWorkspace(db);
 }

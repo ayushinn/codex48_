@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { asc, desc, eq, inArray } from "drizzle-orm";
 import {
   clauses,
   facts,
@@ -171,28 +171,25 @@ export async function runPreflight(
   const openExisting = existing.filter((f) => f.state === "open");
   const decidedExisting = existing.filter((f) => f.state !== "open");
 
-  let removed = 0;
-  for (const decided of decidedExisting) {
-    const stillPresent = decided.quote ? review.content.includes(decided.quote) : true;
-    if (!stillPresent) {
-      await db.delete(findings).where(eq(findings.id, decided.id));
-      removed++;
-    }
-  }
-
-  const survivors = (await db.select().from(findings).where(eq(findings.reviewId, review.id))).filter(
-    (f) => f.state !== "open",
+  // A decided finding survives only while its quoted span is still in the draft;
+  // open findings are always replaced by the fresh run.
+  const staleDecided = decidedExisting.filter((d) =>
+    d.quote ? !review.content.includes(d.quote) : false,
   );
+  const staleIds = new Set(staleDecided.map((d) => d.id));
+  const survivors = decidedExisting.filter((d) => !staleIds.has(d.id));
+  const removed = staleDecided.length;
 
-  // Open findings are replaced wholesale: delete them before inserting the fresh set.
-  // Inserting first would leave the previous run's open row in place, so every re-run
-  // would add a second row for the same clause+quote (and its stale "why").
-  for (const f of openExisting) {
-    await db.delete(findings).where(eq(findings.id, f.id));
-  }
+  // One statement for every delete and one for every insert. On a hosted database
+  // each statement is a network round trip, and a review with a dozen findings
+  // would otherwise spend the whole serverless request budget paying for them one
+  // at a time — which is exactly how a write stops part-way through.
+  const stale = [...openExisting.map((f) => f.id), ...staleDecided.map((d) => d.id)];
+  if (stale.length > 0) await db.delete(findings).where(inArray(findings.id, stale));
 
   let carried = 0;
   let seq = survivors.length;
+  const fresh: (typeof findings.$inferInsert)[] = [];
   for (const v of verified) {
     const key = `${v.clause.code}::${normalize(v.candidate.quote ?? "append")}`;
     const alreadyDecided = survivors.find(
@@ -203,7 +200,7 @@ export async function runPreflight(
       continue;
     }
     seq++;
-    await db.insert(findings).values({
+    fresh.push({
       id: randomUUID(),
       reviewId: review.id,
       seq,
@@ -224,6 +221,7 @@ export async function runPreflight(
       isBlocker: v.severity === "blocker",
     });
   }
+  if (fresh.length > 0) await db.insert(findings).values(fresh);
 
   const engine = {
     mode: (aiConfigured() && llmFindings ? "rules+llm" : "rules-only") as "rules+llm" | "rules-only",
@@ -262,10 +260,8 @@ export async function runPreflight(
     nextStatus,
   });
 
-  const finalFindings = await db
-    .select()
-    .from(findings)
-    .where(and(eq(findings.reviewId, review.id), eq(findings.state, "open")));
+  // The rows just written are the open set — no need to read them back.
+  const finalFindings = fresh;
 
   return {
     reviewId: review.id,
