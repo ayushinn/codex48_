@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analysePixels, contrastRatioOf, evaluateImage, matchVariant, nearestPaletteDistance, UNIFORM_TONAL_EPS } from "@/lib/engine/visual";
+import { analysePixels, contrastRatioOf, evaluateImage, evaluateImageMeta, matchVariant, nearestPaletteDistance, UNIFORM_TONAL_EPS } from "@/lib/engine/visual";
 import { runVisualAudit, VISUAL_CONFIG, VISUAL_TEST_CASES } from "@/lib/visual-testset";
 
 /**
@@ -250,5 +250,20 @@ describe("evaluateImage rules", () => {
       VISUAL_CONFIG,
     );
     expect(rules.map((r) => r.rule).sort()).toEqual(["clear-space", "logo-variant", "palette"]);
+  });
+
+  it("never substitutes a passing contrast value for missing measurements", () => {
+    const results = evaluateImageMeta({ name: "transparent.png", kind: "photo", contrastRatio: null }, VISUAL_CONFIG);
+    expect(results.some((r) => r.rule === "contrast")).toBe(false);
+  });
+
+  it("reports every distinct failing logo rule from stored intake metadata", () => {
+    const results = evaluateImageMeta({
+      name: "off-brand-logo.png", kind: "logo", palette: ["#D6006E"],
+      contrastRatio: 1.2, offPaletteShare: 1, clearSpaceRatio: 0.05, aspectRatio: 8,
+    }, VISUAL_CONFIG);
+    expect(results.filter((r) => !r.passed).map((r) => r.rule).sort()).toEqual([
+      "clear-space", "contrast", "logo-variant", "palette",
+    ]);
   });
 });

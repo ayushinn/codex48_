@@ -2,9 +2,32 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { analysePixels } from "@/lib/engine/visual";
+import { BRAND_PALETTE } from "@/lib/visual-config";
 
 type ChannelOption = { key: string; name: string; maxChars: number | null; minWords: number | null };
-type ImageMeta = { id: string; name: string; alt: string; palette: string[]; contrastRatio?: number };
+type ImageMeta = {
+  id: string;
+  name: string;
+  alt?: string;
+  /** \"photo\" (default when absent) or \"logo\" — logos add variant + clear-space rules. */
+  kind?: "photo" | "logo";
+  palette?: string[];
+  /** Mark-vs-background WCAG ratio for logos, tonal spread for photos; null when unmeasurable. */
+  contrastRatio?: number | null;
+  photoContrastRatio?: number | null;
+  logoContrastRatio?: number | null;
+  /** 0..1 share of sampled pixels off-palette. */
+  offPaletteShare?: number;
+  /** 0..1 clear space around the logo content box, fraction of logo height. */
+  clearSpaceRatio?: number;
+  /** Width in pixels. */
+  width?: number;
+  /** Height in pixels. */
+  height?: number;
+  /** Aspect ratio (width / height) when kind === \"logo\" .*/
+  aspectRatio?: number;
+};
 
 const SAMPLE = `AURORA CALM is here!!! Meet the #1 miracle ritual your mornings have been begging for.
 
@@ -16,82 +39,54 @@ Our clinically proven formula guarantees results in 7 days - act now, limited ti
 
 #AuroraCalm #wellness #morning #selfcare #mindfulness #ritual`;
 
-function relativeLuminance(r: number, g: number, b: number): number {
-  const lin = (v: number) => {
-    const s = v / 255;
-    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
-}
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
-/**
- * IMP-1 (Round 2 state): alt text is checked from the draft, and each attached
- * image is analysed in the browser for its dominant palette and the contrast
- * between its dominant light and dark tones. Only this metadata leaves the
- * browser - the image itself is never uploaded.
- */
-async function analyseImage(file: File): Promise<{ palette: string[]; contrastRatio: number }> {
-  const bitmap = await createImageBitmap(file);
-  const width = Math.min(160, bitmap.width);
-  const height = Math.max(1, Math.round((bitmap.height / bitmap.width) * width));
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas unavailable");
-  ctx.drawImage(bitmap, 0, 0, width, height);
-  const { data } = ctx.getImageData(0, 0, width, height);
-
-  const buckets = new Map<number, { r: number; g: number; b: number; n: number }>();
-  let lightSum = 0;
-  let lightN = 0;
-  let darkSum = 0;
-  let darkN = 0;
-  const total = width * height;
-
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    const a = data[i + 3];
-    if (a < 200) continue;
-    const key = ((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5);
-    const bucket = buckets.get(key) ?? { r: 0, g: 0, b: 0, n: 0 };
-    bucket.r += r;
-    bucket.g += g;
-    bucket.b += b;
-    bucket.n++;
-    buckets.set(key, bucket);
-
-    const lum = relativeLuminance(r, g, b);
-    if (lum > 0.4) {
-      lightSum += lum;
-      lightN++;
-    } else {
-      darkSum += lum;
-      darkN++;
-    }
+async function analyseImage(file: File) {
+  if (!file.type.startsWith("image/")) throw new Error(`${file.name} is not a supported image.`);
+  if (file.size > MAX_IMAGE_BYTES) throw new Error(`${file.name} is over the 10 MB image limit.`);
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    throw new Error(`${file.name} could not be decoded. Try a valid PNG, JPEG, WebP or GIF image.`);
   }
-
-  const palette = [...buckets.values()]
-    .sort((a, b) => b.n - a.n)
-    .slice(0, 6)
-    .map((b) => {
-      const r = Math.round(b.r / b.n);
-      const g = Math.round(b.g / b.n);
-      const bl = Math.round(b.b / b.n);
-      return `#${[r, g, bl].map((v) => v.toString(16).padStart(2, "0")).join("")}`.toUpperCase();
-    });
-
-  const lightAvg = lightN > total * 0.02 ? lightSum / lightN : null;
-  const darkAvg = darkN > total * 0.02 ? darkSum / darkN : null;
-  const contrastRatio =
-    lightAvg !== null && darkAvg !== null
-      ? (Math.max(lightAvg, darkAvg) + 0.05) / (Math.min(lightAvg, darkAvg) + 0.05)
-      : 10;
-
-  void bitmap;
-  return { palette, contrastRatio: Math.round(contrastRatio * 100) / 100 };
+  try {
+    if (!bitmap.width || !bitmap.height || bitmap.width * bitmap.height > 40_000_000) {
+      throw new Error(`${file.name} has invalid or oversized dimensions.`);
+    }
+    const scale = Math.min(1, 160 / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) throw new Error("Image analysis is unavailable in this browser.");
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    const { data } = ctx.getImageData(0, 0, width, height);
+    let hasVisiblePixels = false;
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] >= 200) {
+        hasVisiblePixels = true;
+        break;
+      }
+    }
+    if (!hasVisiblePixels) throw new Error(`${file.name} is fully transparent or has no visible pixels.`);
+    const analysis = analysePixels(data, width, height, BRAND_PALETTE);
+    return {
+      palette: analysis.palette,
+      photoContrastRatio: analysis.contrastRatio,
+      logoContrastRatio: analysis.markContrastRatio,
+      offPaletteShare: analysis.offPaletteShare,
+      clearSpaceRatio: analysis.clearSpaceRatio,
+      width: analysis.width,
+      height: analysis.height,
+      aspectRatio: analysis.aspectRatio,
+    };
+  } finally {
+    bitmap.close();
+  }
 }
 
 export function IntakeForm({ channels }: { channels: ChannelOption[] }) {
@@ -100,6 +95,7 @@ export function IntakeForm({ channels }: { channels: ChannelOption[] }) {
   const [channelKey, setChannelKey] = useState(channels[0]?.key ?? "social");
   const [content, setContent] = useState("");
   const [images, setImages] = useState<ImageMeta[]>([]);
+  const [imageKind, setImageKind] = useState<"photo" | "logo">("photo");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -115,9 +111,17 @@ export function IntakeForm({ channels }: { channels: ChannelOption[] }) {
       const form = new FormData();
       form.append("file", file);
       const res = await fetch("/api/intake", { method: "POST", body: form });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Upload failed");
-      setContent((prev) => (prev.trim() ? `${prev.trimEnd()}\n\n${json.content}` : json.content));
+      const responseText = await res.text();
+      let json: { content?: string; error?: string } = {};
+      try {
+        json = responseText ? JSON.parse(responseText) as typeof json : {};
+      } catch {
+        // Hosting platforms may return an HTML 413 page before the route runs.
+      }
+      if (!res.ok) throw new Error(json.error ?? `Upload failed (HTTP ${res.status}). Documents must be under 4 MB.`);
+      if (!json.content) throw new Error("No text could be extracted from the selected document.");
+      const extracted = json.content;
+      setContent((prev) => (prev.trim() ? `${prev.trimEnd()}\n\n${extracted}` : extracted));
       if (!title) setTitle(file.name.replace(/\.[^.]+$/, ""));
     } catch (err) {
       setError((err as Error).message);
@@ -133,11 +137,12 @@ export function IntakeForm({ channels }: { channels: ChannelOption[] }) {
     setError(null);
     try {
       for (const file of Array.from(files)) {
-        const { palette, contrastRatio } = await analyseImage(file);
+        const metadata = await analyseImage(file);
         const id = crypto.randomUUID();
         setImages((prev) => [
           ...prev,
-          { id, name: file.name, alt: "", palette, contrastRatio },
+          { id, name: file.name, alt: "", kind: imageKind, ...metadata,
+            contrastRatio: imageKind === "logo" ? metadata.logoContrastRatio : metadata.photoContrastRatio },
         ]);
         setContent((prev) => `${prev.trimEnd()}\n\n![](${file.name})`);
       }
@@ -154,7 +159,7 @@ export function IntakeForm({ channels }: { channels: ChannelOption[] }) {
     setError(null);
     try {
       const finalContent = images.reduce(
-        (acc, img) => (img.alt.trim() ? acc.replace(`![](${img.name})`, `![${img.alt.trim()}](${img.name})`) : acc),
+        (acc, img) => ( (img.alt ?? "").trim() ? acc.replace(`![](${img.name})`, `![${(img.alt ?? "").trim()}](${img.name})`) : acc),
         content,
       );
       const res = await fetch("/api/reviews", {
@@ -170,7 +175,15 @@ export function IntakeForm({ channels }: { channels: ChannelOption[] }) {
             name: i.name,
             alt: i.alt,
             palette: i.palette,
+            kind: i.kind,
             contrastRatio: i.contrastRatio,
+            photoContrastRatio: i.photoContrastRatio,
+            logoContrastRatio: i.logoContrastRatio,
+            offPaletteShare: i.offPaletteShare,
+            clearSpaceRatio: i.clearSpaceRatio,
+            width: i.width,
+            height: i.height,
+            aspectRatio: i.aspectRatio,
           })),
         }),
       });
@@ -233,6 +246,13 @@ export function IntakeForm({ channels }: { channels: ChannelOption[] }) {
       </label>
 
       <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 text-sm">
+          Image type
+          <select value={imageKind} onChange={(e) => setImageKind(e.target.value as "photo" | "logo")} className="rounded-md border border-line bg-white px-2 py-2">
+            <option value="photo">Photo / graphic</option>
+            <option value="logo">Logo</option>
+          </select>
+        </label>
         <button
           type="button"
           onClick={() => fileRef.current?.click()}
@@ -254,7 +274,7 @@ export function IntakeForm({ channels }: { channels: ChannelOption[] }) {
           disabled={busy !== null}
           className="rounded-md border border-line px-3 py-2 text-sm hover:border-slate-400 disabled:opacity-50"
         >
-          {busy === "images" ? "Analysing image…" : "Attach image (alt + contrast)"}
+          {busy === "images" ? "Analysing image…" : "Attach image (brand and contrast checks)"}
         </button>
         <input
           ref={imageRef}
@@ -280,27 +300,29 @@ export function IntakeForm({ channels }: { channels: ChannelOption[] }) {
       {images.length > 0 && (
         <div className="space-y-3 rounded-md border border-line bg-slate-50 p-3">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Attached images · analysed in your browser (palette {images[0]?.palette.join(" ")} · only
+            Attached images · analysed in your browser (palette {images[0]?.palette?.join(" ") ?? "not available"} · only
             metadata is stored)
           </p>
           {images.map((img) => (
             <div key={img.id} className="flex flex-wrap items-center gap-3 text-sm">
               <span className="font-mono text-xs">{img.name}</span>
               <span className="rounded bg-white px-1.5 py-0.5 text-xs">
-                contrast {img.contrastRatio?.toFixed(2)}:1
+                contrast {typeof img.contrastRatio === "number" ? `${img.contrastRatio.toFixed(2)}:1` : "not measurable"}
               </span>
               <span className="flex gap-1">
-                {img.palette.map((c) => (
-                  <span
-                    key={c}
-                    title={c}
-                    className="inline-block h-4 w-4 rounded border border-line"
-                    style={{ background: c }}
-                  />
-                ))}
+                {img.palette && img.palette.length > 0 ? (
+                  img.palette.map((c) => (
+                    <span
+                      key={c}
+                      title={c}
+                      className="inline-block h-4 w-4 rounded border border-line"
+                      style={{ background: c }}
+                    />
+                  ))
+                ) : null}
               </span>
               <input
-                value={img.alt}
+                value={(img.alt ?? "")}
                 onChange={(e) =>
                   setImages((prev) =>
                     prev.map((p) => (p.id === img.id ? { ...p, alt: e.target.value } : p)),

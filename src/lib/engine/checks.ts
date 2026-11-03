@@ -2,7 +2,7 @@ import type { Clause, Fact, Term, Channel } from "@/lib/db/schema";
 import type { Block } from "./text";
 import { gradeLevel, toBlocks, tokenize } from "./text";
 import { evaluateImageMeta, type VisualRuleConfig, type VisualRuleResult } from "./visual";
-import { VISUAL_THRESHOLDS } from "@/lib/visual-config";
+import { LOGO_VARIANTS, VISUAL_THRESHOLDS } from "@/lib/visual-config";
 
 /**
  * Deterministic check groups.
@@ -38,6 +38,8 @@ export type ImageMeta = {
   palette?: string[];
   /** Contrast measured at intake: mark-vs-background for logos, tonal spread for photos. */
   contrastRatio?: number | null;
+  photoContrastRatio?: number | null;
+  logoContrastRatio?: number | null;
   width?: number;
   height?: number;
   aspectRatio?: number;
@@ -81,7 +83,9 @@ function visualConfigFromClauses(ctx: Ctx): VisualRuleConfig {
     minContrast: num(alt, "minContrast") ?? VISUAL_THRESHOLDS.minContrast,
     maxOffPaletteShare: num(pal, "maxOffPaletteShare") ?? VISUAL_THRESHOLDS.maxOffPaletteShare,
     minClearSpace: num(logo, "minClearSpace") ?? VISUAL_THRESHOLDS.minClearSpace,
-    variants: Array.isArray(logo.variants) ? (logo.variants as VisualRuleConfig["variants"]) : undefined,
+    variants: Array.isArray(logo.variants)
+      ? (logo.variants as VisualRuleConfig["variants"])
+      : LOGO_VARIANTS,
   };
 }
 
@@ -661,10 +665,11 @@ export function runRuleChecks(ctx: Ctx): Candidate[] {
     ...checkAccessibility(ctx),
     ...checkChannel(ctx),
   ];
-  // De-duplicate identical (clause, quote) candidates
+  // Keep distinct explanations attached to the same clause and image span
+  // (e.g. logo clear-space and logo variant rules), while suppressing exact dupes.
   const seen = new Set<string>();
   return candidates.filter((c) => {
-    const key = `${c.clauseCode}::${(c.quote ?? "append").toLowerCase()}`;
+    const key = `${c.clauseCode}::${(c.quote ?? "append").toLowerCase()}::${c.why.toLowerCase()}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

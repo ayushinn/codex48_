@@ -16,11 +16,25 @@ const CreateReview = z.object({
   images: z
     .array(
       z.object({
-        id: z.string(),
-        name: z.string(),
-        alt: z.string().optional(),
-        palette: z.array(z.string()).optional(),
-        contrastRatio: z.number().optional(),
+        id: z.string().min(1).max(100),
+        name: z.string().min(1).max(255),
+        alt: z.string().max(2000).optional(),
+        kind: z.enum(["photo", "logo"]).optional(),
+        palette: z.array(z.string().regex(/^#[0-9a-f]{6}$/i)).max(12).optional(),
+        /** Mark-vs-background WCAG ratio for logos, tonal spread for photos; null when unmeasurable. */
+        contrastRatio: z.number().finite().min(1).max(21).nullable().optional(),
+        photoContrastRatio: z.number().finite().min(1).max(21).nullable().optional(),
+        logoContrastRatio: z.number().finite().min(1).max(21).nullable().optional(),
+        /** 0..1 share of sampled pixels outside the approved palette. */
+        offPaletteShare: z.number().finite().min(0).max(1).optional(),
+        /** 0..1 clear space around logo content box, fraction of logo height. */
+        clearSpaceRatio: z.number().finite().min(0).max(10).optional(),
+        /** Width in pixels. */
+        width: z.number().int().positive().max(100_000).optional(),
+        /** Height in pixels. */
+        height: z.number().int().positive().max(100_000).optional(),
+        /** Width / height ratio (when kind === "logo"). */
+        aspectRatio: z.number().finite().positive().max(1000).optional(),
       }),
     )
     .optional(),

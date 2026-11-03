@@ -389,6 +389,8 @@ export function evaluateImageMeta(
     kind?: ImageKind;
     palette?: string[];
     contrastRatio?: number | null;
+    photoContrastRatio?: number | null;
+    logoContrastRatio?: number | null;
     width?: number;
     height?: number;
     aspectRatio?: number;
@@ -402,22 +404,26 @@ export function evaluateImageMeta(
   const minClear = cfg.minClearSpace ?? DEFAULT_MIN_CLEAR_SPACE;
   const out: VisualRuleResult[] = [];
 
-  if (typeof image.contrastRatio === "number") {
+  const measuredContrast = image.kind === "logo"
+    ? image.logoContrastRatio ?? image.contrastRatio
+    : image.photoContrastRatio ?? image.contrastRatio;
+
+  if (typeof measuredContrast === "number") {
     const isLogo = image.kind === "logo";
     const unit = isLogo ? "mark vs background" : "tonal spread";
     out.push({
       rule: "contrast",
-      passed: image.contrastRatio >= minContrast,
-      measured: `${image.contrastRatio.toFixed(2)}:1 ${unit}`,
+      passed: measuredContrast >= minContrast,
+      measured: `${measuredContrast.toFixed(2)}:1 ${unit}`,
       required: `${minContrast.toFixed(1)}:1 ${unit}`,
       why:
-        image.contrastRatio >= minContrast
+        measuredContrast >= minContrast
           ? isLogo
-            ? `The mark inside "${image.name}" contrasts with its background at ${image.contrastRatio.toFixed(2)}:1, at or above the ${minContrast.toFixed(1)}:1 WCAG 2.2 AA floor.`
-            : `Measured contrast inside "${image.name}" (tonal spread) is ${image.contrastRatio.toFixed(2)}:1, above the ${minContrast.toFixed(1)}:1 WCAG floor — overlay text has a legible range.`
+            ? `The mark inside "${image.name}" contrasts with its background at ${measuredContrast.toFixed(2)}:1, at or above the ${minContrast.toFixed(1)}:1 WCAG 2.2 AA floor.`
+            : `Measured contrast inside "${image.name}" (tonal spread) is ${measuredContrast.toFixed(2)}:1, above the ${minContrast.toFixed(1)}:1 WCAG floor — overlay text has a legible range.`
           : isLogo
-            ? `The mark inside "${image.name}" contrasts with its background at only ${image.contrastRatio.toFixed(2)}:1; WCAG 2.2 AA requires ${minContrast.toFixed(1)}:1.`
-            : `Measured contrast inside "${image.name}" (tonal spread) is only ${image.contrastRatio.toFixed(2)}:1; overlay text needs ≥ ${minContrast.toFixed(1)}:1 to stay legible.`,
+            ? `The mark inside "${image.name}" contrasts with its background at only ${measuredContrast.toFixed(2)}:1; WCAG 2.2 AA requires ${minContrast.toFixed(1)}:1.`
+            : `Measured contrast inside "${image.name}" (tonal spread) is only ${measuredContrast.toFixed(2)}:1; overlay text needs ≥ ${minContrast.toFixed(1)}:1 to stay legible.`,
     });
   }
 

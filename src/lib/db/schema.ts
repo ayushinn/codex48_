@@ -117,7 +117,28 @@ export const reviews = pgTable("reviews", {
   createdBy: text("created_by").notNull(),
   guidelineVersionId: text("guideline_version_id").references(() => guidelineVersions.id),
   images: jsonb("images")
-    .$type<{ id: string; name: string; alt?: string; palette?: string[]; contrastRatio?: number }[]>()
+    .$type<{
+      id: string;
+      name: string;
+      alt?: string;
+      /** \"photo\" (default when absent) or \"logo\" — logos add variant + clear-space rules. */
+      kind?: "photo" | "logo";
+      palette?: string[];
+      /** Mark-vs-background WCAG ratio for logos, tonal spread for photos; null when unmeasurable. */
+      contrastRatio?: number | null;
+      photoContrastRatio?: number | null;
+      logoContrastRatio?: number | null;
+      /** 0..1 share of sampled pixels off-palette. */
+      offPaletteShare?: number;
+      /** 0..1 clear space around the logo content box, fraction of logo height. */
+      clearSpaceRatio?: number;
+      /** Width in pixels. */
+      width?: number;
+      /** Height in pixels. */
+      height?: number;
+      /** Width / height ratio (when kind === \"logo\"). */
+      aspectRatio?: number;
+    }[]>()
     .notNull()
     .default([]),
   engine: jsonb("engine")
