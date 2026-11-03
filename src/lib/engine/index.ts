@@ -155,8 +155,8 @@ export async function runPreflight(
   for (const candidate of candidates) {
     const result = verifyCandidate(candidate, scoped);
     if (result.ok) {
-      const key = `${result.clause.code}::${normalize(candidate.quote ?? "append")}`;
-      if (verified.some((v) => `${v.clause.code}::${normalize(v.candidate.quote ?? "append")}` === key)) {
+      const key = `${result.clause.code}::${normalize(candidate.quote ?? "append")}::${normalize(candidate.why)}`;
+      if (verified.some((v) => `${v.clause.code}::${normalize(v.candidate.quote ?? "append")}::${normalize(v.candidate.why)}` === key)) {
         rejections.push({ ok: false, reason: "quote-not-found", detail: "duplicate candidate suppressed" });
         continue;
       }
@@ -191,9 +191,9 @@ export async function runPreflight(
   let seq = survivors.length;
   const fresh: (typeof findings.$inferInsert)[] = [];
   for (const v of verified) {
-    const key = `${v.clause.code}::${normalize(v.candidate.quote ?? "append")}`;
+    const key = `${v.clause.code}::${normalize(v.candidate.quote ?? "append")}::${normalize(v.candidate.why)}`;
     const alreadyDecided = survivors.find(
-      (f) => `${f.clauseCode}::${normalize(f.quote ?? "append")}` === key,
+      (f) => `${f.clauseCode}::${normalize(f.quote ?? "append")}::${normalize(f.why)}` === key,
     );
     if (alreadyDecided) {
       carried++;

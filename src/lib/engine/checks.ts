@@ -1,6 +1,8 @@
 import type { Clause, Fact, Term, Channel } from "@/lib/db/schema";
 import type { Block } from "./text";
 import { gradeLevel, toBlocks, tokenize } from "./text";
+import { evaluateImageMeta, type VisualRuleConfig, type VisualRuleResult } from "./visual";
+import { LOGO_VARIANTS, VISUAL_THRESHOLDS } from "@/lib/visual-config";
 
 /**
  * Deterministic check groups.
@@ -31,8 +33,20 @@ export type ImageMeta = {
   id: string;
   name: string;
   alt?: string;
+  /** What the creator declared at intake: photo or logo (logo adds variant + clear-space rules). */
+  kind?: "photo" | "logo";
   palette?: string[];
-  contrastRatio?: number;
+  /** Contrast measured at intake: mark-vs-background for logos, tonal spread for photos. */
+  contrastRatio?: number | null;
+  photoContrastRatio?: number | null;
+  logoContrastRatio?: number | null;
+  width?: number;
+  height?: number;
+  aspectRatio?: number;
+  /** 0..1 share of sampled pixels outside the palette. */
+  offPaletteShare?: number;
+  /** 0..1 clear space around the logo content box, fraction of logo height. */
+  clearSpaceRatio?: number;
 };
 
 export type Ctx = {
@@ -48,6 +62,32 @@ export type Ctx = {
   /** Spans of required verbatim phrases (disclaimers, taglines): protected from other checks. */
   protectedSpans: { start: number; end: number }[];
 };
+
+/**
+ * Thresholds come from the guideline itself when it declares them
+ * (GB-4.1 minContrast, GB-4.3 maxOffPaletteShare, GB-4.4 minClearSpace +
+ * variants) and fall back to the shared defaults in visual-config.ts — so the
+ * engine, the browser intake and the /quality audit pack can never disagree
+ * about what a pass means.
+ */
+function visualConfigFromClauses(ctx: Ctx): VisualRuleConfig {
+  const cfgOf = (code: string): Record<string, unknown> =>
+    (ctx.clauses.find((c) => c.code === code)?.config ?? {}) as Record<string, unknown>;
+  const num = (o: Record<string, unknown>, k: string): number | undefined =>
+    typeof o[k] === "number" ? (o[k] as number) : undefined;
+  const alt = cfgOf("GB-4.1");
+  const pal = cfgOf("GB-4.3");
+  const logo = cfgOf("GB-4.4");
+  return {
+    palette: ctx.palette,
+    minContrast: num(alt, "minContrast") ?? VISUAL_THRESHOLDS.minContrast,
+    maxOffPaletteShare: num(pal, "maxOffPaletteShare") ?? VISUAL_THRESHOLDS.maxOffPaletteShare,
+    minClearSpace: num(logo, "minClearSpace") ?? VISUAL_THRESHOLDS.minClearSpace,
+    variants: Array.isArray(logo.variants)
+      ? (logo.variants as VisualRuleConfig["variants"])
+      : LOGO_VARIANTS,
+  };
+}
 
 const STOP = new Set(
   "a an the and or of to in for with on at by is are was were be been this that it its as from into you your we our not no than then them they he she i".split(
@@ -440,35 +480,33 @@ function checkAccessibility(ctx: Ctx): Candidate[] {
     });
   }
 
-  // Images attached at intake: alt text is checked through the draft's own
-  // image references; the browser-supplied metadata adds contrast + palette.
-  for (const image of ctx.images) {
-    if (!altClause) break;
-    const alt = (image.alt ?? "").trim();
-    void alt;
-    if (typeof image.contrastRatio === "number" && image.contrastRatio < 4.5) {
-      out.push({
-        checkGroup: "accessibility",
-        clauseCode: altClause.code,
-        why: `Measured contrast inside "${image.name}" is ${image.contrastRatio.toFixed(2)}:1 between its dominant light and dark tones. ${altClause.code} requires 4.5:1 for WCAG AA.`,
-        quote: image.name,
-        suggestion: undefined,
-        confidence: "medium",
-      });
-    }
-    if (image.palette?.length && ctx.palette.length) {
-      const off = image.palette.filter((c) => nearestDistance(c, ctx.palette) > 60);
-      if (off.length) {          const paletteClause = resolveClause(ctx, "accessibility", "GB-4.3");
-        if (paletteClause) {
-          out.push({
-            checkGroup: "accessibility",
-            clauseCode: paletteClause.code,
-            why: `"${image.name}" uses ${off.length} colour${off.length > 1 ? "s" : ""} outside the approved palette (${off.slice(0, 4).join(", ")}).`,
-            quote: image.name,
-            suggestion: undefined,
-            confidence: "low",
-          });
-        }
+  // Attached image metadata (IMP-1): the same evaluateImageMeta rules the
+  // /quality audit pack and the browser intake run, so one engine decides
+  // every visual pass/fail. Each failing rule becomes a candidate citing its
+  // own clause, with the measured value in `why`.
+  if (ctx.images.length) {
+    const cfg = visualConfigFromClauses(ctx);
+    const ruleClause: Record<VisualRuleResult["rule"], string> = {
+      contrast: "GB-4.1",
+      palette: "GB-4.3",
+      "clear-space": "GB-4.4",
+      "logo-variant": "GB-4.4",
+    };
+    for (const image of ctx.images) {
+      for (const r of evaluateImageMeta(image, cfg)) {
+        if (r.passed) continue;
+        // A visual finding must cite its matching visual rule. Do not attach it
+        // to an unrelated accessibility clause when imported guidance omits it.
+        const clause = ctx.clauses.find((candidate) => candidate.code === ruleClause[r.rule]);
+        if (!clause) continue;
+        out.push({
+          checkGroup: "accessibility",
+          clauseCode: clause.code,
+          why: r.why,
+          quote: image.name,
+          confidence:
+            r.rule === "palette" ? "medium" : "high",
+        });
       }
     }
   }
@@ -627,10 +665,11 @@ export function runRuleChecks(ctx: Ctx): Candidate[] {
     ...checkAccessibility(ctx),
     ...checkChannel(ctx),
   ];
-  // De-duplicate identical (clause, quote) candidates
+  // Keep distinct explanations attached to the same clause and image span
+  // (e.g. logo clear-space and logo variant rules), while suppressing exact dupes.
   const seen = new Set<string>();
   return candidates.filter((c) => {
-    const key = `${c.clauseCode}::${(c.quote ?? "append").toLowerCase()}`;
+    const key = `${c.clauseCode}::${(c.quote ?? "append").toLowerCase()}::${c.why.toLowerCase()}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

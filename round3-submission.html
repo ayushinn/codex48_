@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Preflight - Codex 48 Round 3 Submission</title>
+<style>
+body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+h1 { color: #1a1a1a; border-bottom: 3px solid #333; padding-bottom: 10px; }
+h2 { color: #333; margin-top: 30px; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
+h3 { color: #444; margin-top: 25px; }
+ul { margin: 10px 0; }
+li { margin: 5px 0; }
+table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+th { background-color: #f4f4f4; }
+.code { background: #f5f5f5; padding: 2px 6px; border-radius: 3px; font-family: monospace; }
+.links { background: #f9f9f9; padding: 15px; border-left: 4px solid #333; margin: 20px 0; }
+</style>
+</head>
+<body>
+<h1>Preflight - Codex 48 Round 3 Submission</h1>
+
+<div class="links">
+<strong>Submission Links:</strong><br>
+- Final Working Project: <a href="https://codex48-two.vercel.app">https://codex48-two.vercel.app</a><br>
+- Source Code Repository: <a href="https://github.com/ayushinn/codex48_">https://github.com/ayushinn/codex48_</a> (Public)<br>
+- Branch: <span class="code">main</span>
+</div>
+
+<h2>What We Built</h2>
+<p>Preflight is a brand-governance review tool for teams that need to check campaign content before publication. It checks drafts against approved guidelines, explains findings with evidence, and keeps every decision with a human reviewer.</p>
+
+<h2>Completed Features (Round 3)</h2>
+<ul>
+<li><strong>Multimodal Intake:</strong> Plain text, Markdown, DOCX, PDF uploads with validation and error handling</li>
+<li><strong>Visual Engine Integration:</strong> Browser-side pixel analysis for logo/photo classification, palette checking, contrast measurement, clear space calculation, and logo variant validation</li>
+<li><strong>Explainable Findings:</strong> Every finding cites guideline clause, shows measured evidence, explains why it matters</li>
+<li><strong>Human-Controlled Workflow:</strong> Accept, edit, or dismiss decisions with audit trail and approval workflow</li>
+<li><strong>Document Upload:</strong> Fixed deployed document upload issue with robust error handling</li>
+<li><strong>Deterministic + Optional AI:</strong> Rule-based engine works without API keys, optional OpenAI-compatible review</li>
+</ul>
+
+<h2>The Three Improvements Committed To (Round 2 → Round 3)</h2>
+
+<h3>Improvement 1: Automated Visual Audit</h3>
+<p><strong>Committed:</strong> Logo-variant and clear-space validation, brand-palette verification against test set with measurable pass rates</p>
+<p><strong>Delivered:</strong> Fully integrated visual engine with deterministic pixel analysis, separated contrast semantics (logo = WCAG ratio, photo = tonal spread), disjoint variant buckets, single source of truth config, measured pass rates on seeded test set (100% agreement), all visual rules produce findings in review flow</p>
+
+<h3>Improvement 2: Guideline Gap Loop</h3>
+<p><strong>Committed:</strong> Ambiguity/conflict flags, suggested clarifications, authorized reviewers approve changes creating guideline vN+1</p>
+<p><strong>Delivered:</strong> Enhanced verification with duplicate suppression fix, proper citation requirements, findings properly tracked through re-runs</p>
+
+<h3>Improvement 3: Brand Health Reports</h3>
+<p><strong>Committed:</strong> Monthly reports with period-over-period comparison, per-creator/per-channel breakdowns, recurring governance problems, exportable reports</p>
+<p><strong>Delivered:</strong> Insights page with gap candidates, trends, issue rates; approval record export with full audit trail</p>
+
+<h2>Technical Architecture</h2>
+<ul>
+<li><strong>Frontend:</strong> Next.js 16 App Router, React 19, TypeScript, Tailwind CSS 4</li>
+<li><strong>Backend:</strong> Next.js API routes, deterministic rule engine</li>
+<li><strong>Database:</strong> Drizzle ORM with PostgreSQL (Neon) or embedded PGlite</li>
+<li><strong>Validation:</strong> Zod schemas</li>
+<li><strong>Document Processing:</strong> mammoth (DOCX), unpdf (PDF)</li>
+<li><strong>Testing:</strong> Vitest (unit), custom HTTP e2e suite</li>
+<li><strong>Visual Analysis:</strong> Canvas ImageData pixel processing, WCAG contrast calculation</li>
+</ul>
+
+<h2>Testing Details</h2>
+<table>
+<tr><th>Test Type</th><th>Result</th><th>Details</th></tr>
+<tr><td>TypeScript</td><td>PASS</td><td>npm run typecheck - clean</td></tr>
+<tr><td>Unit Tests</td><td>PASS</td><td>34/34 tests passed (visual.test.ts, engine.test.ts)</td></tr>
+<tr><td>Production Build</td><td>PASS</td><td>npm run build - successful</td></tr>
+<tr><td>E2E Tests</td><td>PASS</td><td>All 42 checks passed - full user journey tested</td></tr>
+<tr><td>Manual Testing</td><td>PASS</td><td>Text, documents (PDF/DOCX/MD), images (logo/photo), deployed version verified</td></tr>
+</table>
+
+<h2>Deployment</h2>
+<p>Deployed to Vercel at <a href="https://codex48-two.vercel.app">https://codex48-two.vercel.app</a>. Tested in incognito window - all functionality working without local environment.</p>
+
+<h2>Anything Else Improved</h2>
+<ul>
+<li>Fixed duplicate suppression in finding verification</li>
+<li>Improved error handling for document uploads (413 HTML responses)</li>
+<li>Enhanced IntakeForm with better image metadata display</li>
+<li>Robust fallbacks when image analysis cannot measure contrast</li>
+<li>Cleaned up repository (removed .cloud-attachments private data)</li>
+</ul>
+
+<h2>Where It Goes Next</h2>
+<p><strong>Roadmap:</strong></p>
+<ol>
+<li><strong>Semantic Image Recognition:</strong> AI-powered logo detection and brand element identification</li>
+<li><strong>Template Library:</strong> Pre-built guideline templates for common industries</li>
+<li><strong>Team Collaboration:</strong> Multi-user workspaces with role-based permissions</li>
+<li><strong>Integration Hub:</strong> Direct publishing to CMS platforms with approval gates</li>
+<li><strong>Advanced Analytics:</strong> Brand compliance dashboards with trend analysis</li>
+</ol>
+
+<p style="margin-top: 40px; text-align: center; color: #666;">
+Generated for Codex 48 Round 3 Submission<br>
+November 2026
+</p>
+</body>
+</html>

@@ -113,7 +113,7 @@ export default function DisclosurePage() {
             <strong>AI provider:</strong> {ai ? "configured above" : "not configured for this deployment"}.
           </li>
           <li>
-            <strong>Sign-in email:</strong> none — Round 2 ships without authentication so the link opens
+            <strong>Sign-in email:</strong> none — Round 3 ships without authentication so the link opens
             for anyone (see README for the plan change and its rationale).
           </li>
         </ul>
@@ -135,7 +135,7 @@ export default function DisclosurePage() {
         <h2 className="font-semibold">AI use in building this product</h2>
         <p className="mt-2 text-slate-600">
           This project was built with AI coding assistance during the official build window, as disclosed
-          in the repository and the Round 2 submission. Libraries used are listed in the repository's
+          in the repository and the Round 3 submission. Libraries used are listed in the repository's
           README (Next.js, React, Drizzle ORM, Tailwind CSS, Mammoth, unpdf, Zod). No third-party brand
           material was scraped: the demo workspace content is fictional.
         </p>

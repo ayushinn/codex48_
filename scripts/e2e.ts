@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 /**
  * End-to-end smoke test of the scored core path, driven over real HTTP exactly
  * the way a judge would use the product (no sign-in, cookies only):
@@ -73,6 +75,41 @@ async function main() {
   });
   const cookie = persona.cookie ?? "";
   check("persona cookie issued", persona.status === 200 && cookie.includes("pf_persona"), JSON.stringify(persona.json));
+
+  // Image metadata produced by the browser analyser must reach the real
+  // preflight engine and produce explainable findings, including logo rules.
+  const visualReview = await api("/api/reviews", {
+    method: "POST",
+    cookie,
+    body: JSON.stringify({
+      title: "Visual check",
+      channelKey: "social",
+      content: "A short visual campaign draft with a logo.\n\n![](off-brand-logo.png)",
+      images: [{
+        id: "e2e-logo", name: "off-brand-logo.png", alt: "An off-brand logo in the campaign header",
+        kind: "logo", palette: ["#D6006E", "#FFFFFF"], contrastRatio: 1.2,
+        offPaletteShare: 1, clearSpaceRatio: 0.05, width: 800, height: 100, aspectRatio: 8,
+      }],
+    }),
+  });
+  const visualDetail = visualReview.json?.id
+    ? await api(`/api/reviews/${visualReview.json.id}`, { cookie })
+    : { json: { findings: [] } };
+  const visualFindings = visualDetail.json?.findings ?? [];
+  check("image metadata passes API validation", visualReview.status === 201, JSON.stringify(visualReview.json).slice(0, 240));
+  check("real review reports logo palette, contrast, clear-space and variant violations",
+    ["off-palette", "mark", "Clear space", "no approved variant"].every((needle) => visualFindings.some((f: any) => f.why?.includes(needle))),
+    visualFindings.map((f: any) => f.why).join(" | ").slice(0, 500));
+  check("each logo finding cites its matching visual clause",
+    visualFindings.some((f: any) => f.why?.includes("mark inside") && f.clauseCode === "GB-4.1") &&
+      visualFindings.some((f: any) => f.why?.includes("off-palette") && f.clauseCode === "GB-4.3") &&
+      visualFindings.filter((f: any) => f.why?.includes("Clear space") || f.why?.includes("approved variant"))
+        .every((f: any) => f.clauseCode === "GB-4.4"),
+    visualFindings.map((f: any) => `${f.clauseCode}: ${f.why}`).join(" | ").slice(0, 500));
+  if (visualReview.json?.id) {
+    const visualCleanup = await api(`/api/reviews/${visualReview.json.id}`, { method: "DELETE", cookie });
+    check("visual e2e review cleaned up", visualCleanup.status === 200, `status=${visualCleanup.status}`);
+  }
 
   // 2. Create a review -> preflight runs server-side
   const created = await api("/api/reviews", {
@@ -269,7 +306,7 @@ async function main() {
   );
   const openKeys = (afterRerun.json?.findings ?? [])
     .filter((f: any) => f.state === "open")
-    .map((f: any) => `${f.clauseCode}::${f.quote ?? "append"}`);
+    .map((f: any) => `${f.clauseCode}::${f.quote ?? "append"}::${f.why}`);
   check(
     "re-run replaces open findings instead of duplicating them",
     new Set(openKeys).size === openKeys.length,
@@ -290,6 +327,23 @@ async function main() {
   const intake = await fetch(`${BASE}/api/intake`, { method: "POST", body: form });
   const intakeJson = (await intake.json()) as { content?: string };
   check("markdown file intake", intake.status === 200 && Boolean(intakeJson.content?.includes("document intake")), JSON.stringify(intakeJson).slice(0, 160));
+  const pdfForm = new FormData();
+  pdfForm.append("file", new Blob([await readFile("round1-submission.pdf")], { type: "application/pdf" }), "sample.pdf");
+  const pdfIntake = await fetch(`${BASE}/api/intake`, { method: "POST", body: pdfForm });
+  const pdfJson = await pdfIntake.json() as { content?: string; error?: string };
+  check("PDF document intake extracts text", pdfIntake.status === 200 && (pdfJson.content?.length ?? 0) > 100, pdfJson.error ?? `chars=${pdfJson.content?.length ?? 0}`);
+
+  const emptyForm = new FormData();
+  const emptyIntake = await fetch(`${BASE}/api/intake`, { method: "POST", body: emptyForm });
+  check("missing file returns a helpful validation error", emptyIntake.status === 422);
+  const unsupportedForm = new FormData();
+  unsupportedForm.append("file", new Blob(["not a document"]), "payload.exe");
+  const unsupported = await fetch(`${BASE}/api/intake`, { method: "POST", body: unsupportedForm });
+  check("unsupported upload is rejected without a crash", unsupported.status === 422);
+  const oversizedForm = new FormData();
+  oversizedForm.append("file", new Blob([new Uint8Array(4 * 1024 * 1024 + 1)]), "too-large.txt");
+  const oversized = await fetch(`${BASE}/api/intake`, { method: "POST", body: oversizedForm });
+  check("oversized document is rejected before extraction", oversized.status === 413);
 
   // 11. Review detail page renders with highlighted findings
   const page = await fetch(`${BASE}/reviews/${reviewId}`);

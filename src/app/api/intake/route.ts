@@ -5,19 +5,30 @@ import { NextResponse } from "next/server";
  * one string so every check behaves identically regardless of source format.
  */
 const TEXT_EXT = ["txt", "md", "markdown", "csv", "log"];
+const MAX_DOCUMENT_BYTES = 4 * 1024 * 1024;
 
 export async function POST(req: Request) {
-  const form = await req.formData().catch(() => null);
+  let form: FormData | null;
+  try {
+    form = await req.formData();
+  } catch {
+    return NextResponse.json({ error: "The upload could not be read. Choose a valid document and try again." }, { status: 400 });
+  }
   const file = form?.get("file");
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No file uploaded." }, { status: 422 });
+  }
+  if (file.size === 0) return NextResponse.json({ error: "The selected file is empty." }, { status: 422 });
+  // Keep multipart requests under common serverless request-body limits.
+  if (file.size > MAX_DOCUMENT_BYTES) {
+    return NextResponse.json({ error: "Document is over the 4 MB upload limit." }, { status: 413 });
   }
   const ext = (file.name.split(".").pop() ?? "").toLowerCase();
   const buf = Buffer.from(await file.arrayBuffer());
 
   try {
     let content = "";
-    if (TEXT_EXT.includes(ext) || ext === "") {
+    if (TEXT_EXT.includes(ext)) {
       content = buf.toString("utf-8");
     } else if (ext === "docx") {
       const mammoth = (await import("mammoth")) as unknown as {
@@ -45,7 +56,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ content, chars: content.length, name: file.name });
   } catch (err) {
     return NextResponse.json(
-      { error: `Could not read "${file.name}": ${(err as Error).message}` },
+      { error: `Could not read "${file.name}". The file may be malformed, encrypted, or unsupported.` },
       { status: 422 },
     );
   }

@@ -1,118 +1,72 @@
-# Preflight — brand governance before publication
+# Preflight
 
-Preflight is a content-governance platform: **content goes in, it is checked against your approved
-guidelines, terms, facts and channel rules, the issues come back explained with verbatim evidence,
-and a human decides.** No finding is ever auto-applied, every decision is logged, and the approval
-record exports with the content.
+Preflight checks campaign content against an approved brand guide before publication. It accepts
+text, documents and image metadata, explains findings with guideline evidence, and leaves every
+decision to a human reviewer. Nothing is published or edited automatically.
 
-It is the Round 2 build of our Codex 48 (Inkloom AI) Round 1 plan.
+## What ships
 
-## Quick start
+- Text and channel checks for tone, terminology, claims, accessibility and channel rules.
+- `.txt`, `.md`, `.docx` and `.pdf` intake, with clear errors for malformed or oversized files.
+- Browser-side image analysis for dominant colours, off-palette share, tonal contrast, logo contrast,
+  aspect ratio and logo clear space. The image itself stays in the browser; only analysis metadata is
+  sent with the review.
+- Findings grouped by severity, with measured evidence and the applicable guideline clause.
+- Human accept, edit or dismiss decisions; approval workflow, audit log and Markdown export.
+- Optional server-side OpenAI-compatible review. The deterministic engine works without an API key.
+
+## Visual analysis limits
+
+Visual checks use a deterministic pixel heuristic, not computer vision or semantic recognition. The
+creator labels an upload as a photo/graphic or logo. Photo contrast is a tonal-spread heuristic and
+does not establish text contrast over every possible overlay. Logo contrast estimates the main mark
+against the dominant background. Clear space uses the content bounding box against the dominant
+colour; transparency, gradients, shadows, complex backgrounds and low-contrast marks can affect the
+estimate. A contrast rule is skipped when the analyser cannot measure it; it is never assigned a
+passing score. Human review remains required.
+
+## Local setup
+
+Requirements: Node.js 22 or newer.
 
 ```bash
-npm ci          # install
-npm run dev     # http://localhost:3000  (file-backed PGlite, auto-seeded demo workspace)
+npm ci
+npm run dev
 ```
 
-Production-style run (what we test against):
+Open `http://localhost:3000`. With no `DATABASE_URL`, the app uses embedded PGlite and seeds a demo
+workspace. Copy `.env.example` only if configuring optional services.
+
+## Verification
 
 ```bash
+npm run typecheck
+npm test
 npm run build
-npm run start           # serves on :3000
-npm test                # Vitest unit suite (engine + citation verifier)
-npm run e2e             # HTTP end-to-end suite (expects the server on :3001)
+npm run start -- -p 3001
+npm run e2e
 ```
 
-No configuration is required for local use: with no `DATABASE_URL` the app boots an embedded
-PGlite Postgres in `./data` and seeds a demo workspace (brand guide with clause IDs, terminology
-registries, approved-facts registry, channels, tone examples, and five seeded reviews in different
-workflow states).
+The HTTP e2e suite expects a production server on port 3001. Unit tests exercise the visual audit
+test set and deterministic review engine.
 
-## Environment
+## Architecture
 
-| Variable | Purpose |
-| --- | --- |
-| `DATABASE_URL` | Postgres connection string (Neon/Supabase). Unset → embedded PGlite (local, and as an ephemeral fallback on hosts without a database). |
-| `OPENAI_API_KEY` | Optional. Any OpenAI-compatible endpoint. **Without a key the deterministic rule engine runs the whole product** — the AI pass is additive, never load-bearing. |
-| `OPENAI_BASE_URL` / `OPENAI_MODEL` | Provider selection by env var (default OpenAI, `gpt-4o-mini`). |
-| `AI_SPEND_CAP_USD` | Hard daily spend cap enforced in the adapter (default `2.00`). |
-
-See `.env.example`.
-
-## How a review works
-
-```
-intake (paste / .md / .docx / .pdf, channel + content type)
-  → block model (paragraph, heading, list, image)
-  → retrieval-first scoping (latest guideline version, channel-filtered clauses,
-     terms, facts, tone examples)
-  → rule checks: tone · terminology · messaging · facts & unsupported claims ·
-     accessibility · channel rules        [+ optional LLM pass, server-side key]
-  → deterministic citation verifier (code, not model):
-       clause must be in scope · clause quote verbatim in the stored clause ·
-       content quote locatable in the draft — otherwise the finding is
-       suppressed and counted as a verifier rejection
-  → findings: severity (from the clause's rule type), plain-language why,
-     verbatim clause quote + code, exact span in the draft, confidence,
-     word-level diff suggestion
-  → human decides: accept / edit / dismiss-with-reason
-  → state machine: DRAFT → SELF REVIEW → READY FOR REVIEW → IN REVIEW →
-     APPROVED → PUBLISH READY (+ CHANGES REQUESTED loop), illegal transitions 409
-  → export: content + approval record (Markdown) with AI-disclosure footnote
-  → insights: recurring issues, dismissal clusters → guideline-gap candidates,
-     cycle times, issue-rate trend
-```
-
-Key properties:
-
-- **A model can never invent a citation.** Every candidate — rule or LLM — passes the same
-  verifier before display; rejections are surfaced in the product's disclosure.
-- **Retrieval-first scoping.** A check may only cite a clause the workspace actually has. Seeded
-  codes (`GB-2.2` …) are preferred; pasted/imported guidelines fall back to their check-group
-  classification, so a judge's own brand book drives every check.
-- **Roles are enforced server-side** even without a login: a session cookie picks the active
-  persona (Creator / Manager / Authorised Reviewer), the rules — including "no self-approval" —
-  are applied in the API, and every transition lands in an append-only audit log.
-- **Disclosure lives in the product**, not only in the deck: an AI-assisted-review badge, a
-  disclosure page naming provider, model, data received and spend cap, and the footnote on every
-  exported approval record.
-
-## Routes
-
-| Route | What it is |
-| --- | --- |
-| `/` | Workspace dashboard: reviews by state, blockers, cycle time |
-| `/reviews/new` | Intake — paste or upload, pick channel, run preflight |
-| `/reviews/[id]` | The review: findings with evidence + diffs, comments, revisions, workflow bar, audit log |
-| `/knowledge` | Guideline import (versioned), clauses, terminology, facts, channels, tone examples |
-| `/insights` | Recurring issues, guideline-gap candidates, cycle times, trends |
-| `/disclosure` | AI and external-services disclosure, engine mode, verifier rejections |
-| `/settings` | Workspace settings, self-approval switch, recent audit entries |
-| `/api/*` | All mutations (Zod-validated, persona-scoped, audited) |
-
-## Stack
-
-Next.js 16 (App Router, route handlers) · React 19 · TypeScript · Tailwind CSS 4 ·
-Drizzle ORM · PostgreSQL (Neon in production, embedded PGlite locally) · Zod ·
-mammoth (DOCX) · unpdf (PDF) · provider-agnostic OpenAI-compatible AI adapter ·
-Vitest (unit) + fetch-based HTTP e2e suite.
+- Next.js App Router, React and TypeScript; Tailwind CSS.
+- Drizzle ORM over PostgreSQL (Neon when `DATABASE_URL` is set) or embedded PGlite for local use.
+- Zod request validation; deterministic rules and an optional OpenAI-compatible adapter.
+- `mammoth` extracts DOCX text; `unpdf` extracts PDF text.
+- Vitest unit tests and a fetch-based production HTTP journey in `scripts/e2e.ts`.
 
 ## Deployment
 
-Any Node host works (Vercel/Netlify): `npm ci && npm run build && npm run start`.
+Build with `npm ci && npm run build`, then run `npm run start`. For a persistent hosted deployment,
+configure `DATABASE_URL`; without it, embedded data may reset when a serverless instance restarts.
+Set `OPENAI_API_KEY` only to enable the optional AI pass. See `.env.example` for supported settings.
 
-- **Set `DATABASE_URL`** (free-tier Neon) for persistent data. Without it the app still runs and
-  seeds itself, but on serverless hosts the database lives in `/tmp` and resets on cold starts.
-- No sign-in is required to open the product — open it in a private window and it works.
+## Routes
 
-## Repository contents
+`/` dashboard · `/reviews/new` intake · `/reviews/[id]` review and decisions · `/knowledge` guidelines
+and registries · `/insights` trends · `/disclosure` service disclosure · `/settings` workspace policy.
 
-- `SUBMISSION.md` — the Round 2 submission material (features, tech, plan changes, Round 3 improvements)
-- `ROUND1.md` + `round1-plan.typ` + `round1-submission.pdf` + `artifacts/` — the Round 1 plan and its sources
-
-## Honesty notes
-
-- No finding is auto-applied; a human accept is the only thing that changes content.
-- Low-confidence findings are labelled as judgement calls.
-- Demo content is fictional (Aurora Wellness / Aurora Calm); no third-party brand material is used.
-- AI assistance in building this product is disclosed in the repository, as the rules require.
+The Round 3 delivery summary and current verification record are in [SUBMISSION.md](SUBMISSION.md).
