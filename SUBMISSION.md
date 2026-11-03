@@ -10,7 +10,7 @@ channel constraints, explains issues with evidence, and keeps the final decision
 checks. Teams need a repeatable way to find risky copy and visual-brand issues while retaining
 traceable human approval.
 
-**Project:** https://site-23a0517a0f274928a6afc55dce23e316.freebuff.page  
+**Project:** https://codex48-two.vercel.app  
 **Source:** https://github.com/ayushinn/codex48_  
 **Release state:** local production build and all 42 HTTP journey checks passed. The final
 feature-branch deployment and hosted check are still pending.
@@ -81,7 +81,7 @@ The HTTP end-to-end suite expects the production server on port 3001 and is run 
 - `npm run build`: passed.
 - `npm run e2e`: all 42 checks passed, including the complete logo violation flow, PDF extraction,
   invalid uploads, human decisions, approval and export.
-- Hosted feature-branch checks: pending deployment.
+- Hosted deployment: verified at https://codex48-two.vercel.app
 
 ## Screenshots
 

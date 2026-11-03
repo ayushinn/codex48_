@@ -35,3 +35,7 @@ __pycache__/
 /.open-next/
 /.wrangler/
 .cloud-attachments/*
+
+# Browser testing profiles and temp files
+.headless-profile/
+.tmp-node-userinfo.*

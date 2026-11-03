@@ -68,7 +68,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <footer className="border-t border-line bg-white">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-6 text-sm text-slate-500">
             <p>
-              Preflight — Codex 48 Hackathon, Round 2 build. Automation proposes; humans decide; every
+              Preflight — Codex 48 Hackathon, Round 3 build. Automation proposes; humans decide; every
               decision is logged.
             </p>
             <p>
