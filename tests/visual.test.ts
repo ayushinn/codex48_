@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analysePixels, evaluateImage, matchVariant, nearestPaletteDistance } from "@/lib/engine/visual";
+import { analysePixels, contrastRatioOf, evaluateImage, matchVariant, nearestPaletteDistance, UNIFORM_TONAL_EPS } from "@/lib/engine/visual";
 import { runVisualAudit, VISUAL_CONFIG, VISUAL_TEST_CASES } from "@/lib/visual-testset";
 
 /**
@@ -46,6 +46,18 @@ describe("visual audit pack (seeded image test set)", () => {
       }
     }
   });
+
+  it("labels photo contrast as a tonal heuristic and logo contrast as WCAG", () => {
+    const audit = runVisualAudit();
+    for (const c of audit.cases) {
+      for (const r of c.results) {
+        if (r.rule !== "contrast") continue;
+        expect(r.measured, `${c.testCase.id}`).toContain(
+          c.testCase.kind === "logo" ? "mark vs background" : "tonal spread",
+        );
+      }
+    }
+  });
 });
 
 describe("pixel analysis", () => {
@@ -67,11 +79,28 @@ describe("pixel analysis", () => {
     expect(analysis.clearSpaceRatio).toBeCloseTo(0.5, 2);
   });
 
-  it("does not crash or divide by zero on a fully transparent buffer", () => {
+  it("returns null contrast (not a guess) on a fully transparent buffer", () => {
     const analysis = analysePixels(new Uint8ClampedArray(32 * 32 * 4), 32, 32, VISUAL_CONFIG.palette);
-    expect(Number.isFinite(analysis.contrastRatio)).toBe(true);
+    expect(analysis.contrastRatio).toBeNull();
+    expect(analysis.markContrastRatio).toBeNull();
     expect(analysis.offPaletteShare).toBe(0);
     expect(analysis.clearSpaceRatio).toBe(1);
+    // And the photo contrast rule is skipped rather than scored.
+    const rules = evaluateImage(analysis, "photo", VISUAL_CONFIG);
+    expect(rules.map((r) => r.rule)).toEqual(["palette"]);
+  });
+
+  it("returns null contrast on a uniform fill — nothing to measure", () => {
+    const data = new Uint8ClampedArray(64 * 64 * 4);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = 0x2b;
+      data[i + 1] = 0x2b;
+      data[i + 2] = 0x2b;
+      data[i + 3] = 255;
+    }
+    const analysis = analysePixels(data, 64, 64, VISUAL_CONFIG.palette);
+    expect(analysis.contrastRatio).toBeNull();
+    expect(UNIFORM_TONAL_EPS).toBeGreaterThan(0);
   });
 
   it("computes off-palette share for a synthetic off-brand image", () => {
@@ -90,15 +119,94 @@ describe("pixel analysis", () => {
     expect(nearestPaletteDistance("#1F3A2E", VISUAL_CONFIG.palette)).toBe(0);
     expect(nearestPaletteDistance("#FF0000", VISUAL_CONFIG.palette)).toBeGreaterThan(100);
   });
+
+  it("handles malformed input: truncated buffers and zero dimensions", () => {
+    // Declared 100x100 but only 50 pixels of data exist.
+    const truncated = analysePixels(new Uint8ClampedArray(50 * 4), 100, 100, VISUAL_CONFIG.palette);
+    expect(truncated.clearSpaceRatio).toBeGreaterThanOrEqual(0);
+    expect(truncated.offPaletteShare).toBeGreaterThanOrEqual(0);
+    // Zero-sized image.
+    const zero = analysePixels(new Uint8ClampedArray(0), 0, 0, VISUAL_CONFIG.palette);
+    expect(zero.aspectRatio).toBe(0);
+    expect(zero.contrastRatio).toBeNull();
+    // Garbage bytes: alpha 0 everywhere → treated as transparent.
+    const garbage = analysePixels(new Uint8ClampedArray([1, 2, 3, 0]), 1, 1, VISUAL_CONFIG.palette);
+    expect(garbage.contrastRatio).toBeNull();
+  });
+
+  it("handles unusually large stride images without scanning every pixel twice", () => {
+    // 640x640 > 40,000 pixels → sampling path engages.
+    const size = 640;
+    const data = new Uint8ClampedArray(size * size * 4);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const i = (y * size + x) * 4;
+        const top = y < size / 2;
+        data[i] = top ? 0x1f : 0xf5;
+        data[i + 1] = top ? 0x3a : 0xf1;
+        data[i + 2] = top ? 0x2e : 0xe8;
+        data[i + 3] = 255;
+      }
+    }
+    const analysis = analysePixels(data, size, size, VISUAL_CONFIG.palette);
+    expect(analysis.offPaletteShare).toBe(0);
+    expect(analysis.contrastRatio).toBeGreaterThan(4.5);
+  });
+});
+
+describe("contrast measurement", () => {
+  it("computes the WCAG 2.2 ratio between two hex colours", () => {
+    expect(contrastRatioOf("#000000", "#FFFFFF")).toBeCloseTo(21, 0);
+    expect(contrastRatioOf("#FFFFFF", "#FFFFFF")).toBeCloseTo(1, 1);
+    // Gold on cream — the reviewer-verified failure case.
+    expect(contrastRatioOf("#C9A227", "#F5F1E8")).toBeLessThan(4.5);
+    // Deep green on cream passes.
+    expect(contrastRatioOf("#1F3A2E", "#F5F1E8")).toBeGreaterThan(4.5);
+  });
+
+  it("photo contrast is a tonal spread, logo contrast is mark-vs-background", () => {
+    const photo = analysePixels(
+      VISUAL_TEST_CASES.find((c) => c.id === "palette-hero")!.build().data,
+      160,
+      100,
+      VISUAL_CONFIG.palette,
+    );
+    expect(photo.contrastRatio).not.toBeNull();
+    const photoRules = evaluateImage(photo, "photo", VISUAL_CONFIG);
+    expect(photoRules.find((r) => r.rule === "contrast")!.measured).toContain("tonal spread");
+
+    const logo = analysePixels(
+      VISUAL_TEST_CASES.find((c) => c.id === "logo-horizontal-ok")!.build().data,
+      240,
+      80,
+      VISUAL_CONFIG.palette,
+    );
+    expect(logo.markColor).toBe("#1F3A2E");
+    const logoRules = evaluateImage(logo, "logo", VISUAL_CONFIG);
+    expect(logoRules.find((r) => r.rule === "contrast")!.measured).toContain("mark vs background");
+  });
 });
 
 describe("variant matching", () => {
-  it("maps aspect ratios into approved buckets", () => {
+  it("maps aspect ratios into disjoint approved buckets", () => {
     const variants = VISUAL_CONFIG.variants!;
     expect(matchVariant(3.0, variants)?.name).toBe("horizontal");
     expect(matchVariant(1.0, variants)?.name).toBe("monogram");
-    expect(matchVariant(1.2, variants)?.name).toBe("stacked");
+    expect(matchVariant(0.7, variants)?.name).toBe("stacked");
+    // Deliberate gap: 1.16–2.19 has no approved variant.
+    expect(matchVariant(1.5, variants)).toBeNull();
     expect(matchVariant(8.0, variants)).toBeNull();
+  });
+
+  it("has no overlapping buckets", () => {
+    const variants = VISUAL_CONFIG.variants!;
+    for (const outer of variants) {
+      for (const inner of variants) {
+        if (outer === inner) continue;
+        const overlap = outer.minRatio <= inner.maxRatio && outer.maxRatio >= inner.minRatio;
+        expect(overlap, `${outer.name} overlaps ${inner.name}`).toBe(false);
+      }
+    }
   });
 });
 
@@ -109,6 +217,9 @@ describe("evaluateImage rules", () => {
     aspectRatio: 3,
     palette: ["#1F3A2E", "#F5F1E8"],
     contrastRatio: 8,
+    markContrastRatio: 8,
+    markColor: "#1F3A2E",
+    backgroundColor: "#F5F1E8",
     offPaletteShare: 0,
     clearSpaceRatio: 0.8,
   };
@@ -120,7 +231,7 @@ describe("evaluateImage rules", () => {
 
   it("applies logo rules to logos and honours thresholds", () => {
     const failing = evaluateImage(
-      { ...base, offPaletteShare: 0.4, clearSpaceRatio: 0.1, aspectRatio: 8 },
+      { ...base, offPaletteShare: 0.4, clearSpaceRatio: 0.1, aspectRatio: 8, markContrastRatio: 2.1 },
       "logo",
       VISUAL_CONFIG,
     );
@@ -128,6 +239,16 @@ describe("evaluateImage rules", () => {
     expect(by.palette.passed).toBe(false);
     expect(by["clear-space"].passed).toBe(false);
     expect(by["logo-variant"].passed).toBe(false);
-    expect(by.contrast.passed).toBe(true);
+    expect(by.contrast.passed).toBe(false);
+    expect(by.contrast.measured).toContain("mark vs background");
+  });
+
+  it("skips the logo contrast rule when mark contrast is not measurable", () => {
+    const rules = evaluateImage(
+      { ...base, markContrastRatio: null, markColor: null },
+      "logo",
+      VISUAL_CONFIG,
+    );
+    expect(rules.map((r) => r.rule).sort()).toEqual(["clear-space", "logo-variant", "palette"]);
   });
 });

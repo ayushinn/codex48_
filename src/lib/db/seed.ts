@@ -18,6 +18,7 @@ import type { DB } from "./index";
 import { runPreflight } from "@/lib/engine";
 import { addComment, decideFinding, transitionReview, type Outcome } from "@/lib/actions";
 import { PERSONAS } from "@/lib/personas";
+import { BRAND_PALETTE, LOGO_VARIANTS, VISUAL_THRESHOLDS } from "@/lib/visual-config";
 
 /**
  * Seeded demo workspace.
@@ -115,7 +116,7 @@ const CLAUSES: {
     body: "Every image ships with alt text of at least 24 characters that describes what the image shows, not its file name or the word image. Text over an image or on a coloured field must meet WCAG 2.2 AA contrast of 4.5:1 or better, measured before export.",
     ruleType: "policy",
     checkGroup: "accessibility",
-    config: { minAltChars: 24 },
+    config: { minAltChars: 24, minContrast: VISUAL_THRESHOLDS.minContrast },
   },
   {
     code: "GB-4.2",
@@ -133,6 +134,19 @@ const CLAUSES: {
     body: "Creative uses the approved palette only: deep green 1F3A2E, gold C9A227, cream F5F1E8, ink 2B2B2B and white. Off-palette colours in imagery or overlays need written sign-off from the brand owner before publication.",
     ruleType: "style",
     checkGroup: "accessibility",
+    config: { maxOffPaletteShare: VISUAL_THRESHOLDS.maxOffPaletteShare },
+  },
+  {
+    code: "GB-4.4",
+    section: "4. Accessibility",
+    title: "Logo variants and clear space",
+    body: "Use the logo only in its approved shapes, measured as width over height: horizontal 2.2-4.5:1, stacked 0.5-0.84:1 and monogram 0.85-1.15:1. Every placement keeps clear space of at least 50% of the logo's height on all four sides - no type, image edge or other mark may enter that space. Never stretch, crop to the edge or recolour the mark outside the approved palette.",
+    ruleType: "policy",
+    checkGroup: "accessibility",
+    config: {
+      minClearSpace: VISUAL_THRESHOLDS.minClearSpace,
+      variants: LOGO_VARIANTS,
+    },
   },
   {
     code: "GB-5.1",
@@ -489,7 +503,7 @@ export async function seedDemoWorkspace(db: DB): Promise<void> {
     tagline: "Clarity, daily.",
     website: "https://aurorawellness.com",
     allowSelfApproval: false,
-    palette: ["#1F3A2E", "#C9A227", "#F5F1E8", "#2B2B2B", "#FFFFFF"],
+    palette: BRAND_PALETTE,
     createdAt: isoDaysAgo(40),
   });
 

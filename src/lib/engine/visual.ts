@@ -9,6 +9,15 @@
  * So the rules that score a user's logo are literally the ones measured by the
  * test set, and the measured pass rate on /quality is a property of the build.
  * No dependency, no model, no network: pure functions over RGBA bytes.
+ *
+ * Contrast is measured differently per image kind, deliberately:
+ *  - a logo gets a real two-colour WCAG 2.2 ratio between the mark's own colour
+ *    and its background — a text-legibility measurement;
+ *  - a photo gets a tonal-spread heuristic (p10 vs p90 luminance), which is a
+ *    legibility proxy for overlay text, not a WCAG text measurement. The rule
+ *    evidence says so.
+ * A uniform or fully transparent image has no measurable contrast; that rule is
+ * skipped rather than guessed (missing input is never scored).
  */
 
 export type ImageKind = "photo" | "logo";
@@ -18,7 +27,7 @@ export type VariantSpec = { name: string; minRatio: number; maxRatio: number };
 export type VisualRuleConfig = {
   /** Approved brand palette as hex strings. Empty disables palette rules. */
   palette: string[];
-  /** WCAG AA contrast between dominant light and dark tones. Default 4.5. */
+  /** WCAG AA contrast floor. Default 4.5. */
   minContrast?: number;
   /** Max share of sampled pixels allowed far from the palette. Default 0.1. */
   maxOffPaletteShare?: number;
@@ -34,8 +43,22 @@ export type ImageAnalysis = {
   aspectRatio: number;
   /** Dominant colours, most frequent first. */
   palette: string[];
-  /** Contrast between the dominant light and dark tones. */
-  contrastRatio: number;
+  /**
+   * Photo contrast: ratio between p90 and p10 luminance over opaque pixels.
+   * null when the image is uniform or has no opaque pixels — no measurable
+   * tonal separation, so the photo contrast rule is skipped.
+   */
+  contrastRatio: number | null;
+  /**
+   * Logo contrast: WCAG ratio between the mark colour and the background
+   * colour. null when no mark could be separated from the background — the
+   * logo contrast rule is then skipped.
+   */
+  markContrastRatio: number | null;
+  /** Average colour of the mark pixels (logos), or null when none found. */
+  markColor: string | null;
+  /** Dominant colour, treated as the background. */
+  backgroundColor: string;
   /** 0..1 share of sampled pixels whose nearest palette colour is far away. */
   offPaletteShare: number;
   /** Min margin around the content bounding box, as a fraction of content height. */
@@ -57,6 +80,11 @@ const DEFAULT_MAX_OFF_PALETTE = 0.1;
 const DEFAULT_MIN_CLEAR_SPACE = 0.5;
 /** RGB distance above which a sampled colour counts as off-palette. */
 export const PALETTE_DISTANCE_FLOOR = 60;
+/**
+ * Tonal spread (p90 − p10 luminance) below this means the image is effectively
+ * one flat fill: there is nothing to contrast, so the rule is skipped.
+ */
+export const UNIFORM_TONAL_EPS = 0.006;
 
 export function hexToRgb(hex: string): [number, number, number] | null {
   const m = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(hex.trim());
@@ -87,6 +115,18 @@ function relativeLuminance(r: number, g: number, b: number): number {
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }
 
+/** The WCAG 2.2 contrast ratio between two hex colours (order-independent). */
+export function contrastRatioOf(a: string, b: string): number {
+  const ca = hexToRgb(a);
+  const cb = hexToRgb(b);
+  if (!ca || !cb) return 1;
+  const la = relativeLuminance(ca[0], ca[1], ca[2]);
+  const lb = relativeLuminance(cb[0], cb[1], cb[2]);
+  const hi = Math.max(la, lb);
+  const lo = Math.min(la, lb);
+  return Math.round((((hi + 0.05) / (lo + 0.05)) * 100)) / 100;
+}
+
 function toHex(r: number, g: number, b: number): string {
   return `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`.toUpperCase();
 }
@@ -102,10 +142,9 @@ export function analysePixels(
   palette: string[],
 ): ImageAnalysis {
   const buckets = new Map<number, { r: number; g: number; b: number; n: number }>();
-  let lightSum = 0;
-  let lightN = 0;
-  let darkSum = 0;
-  let darkN = 0;
+  // Luminance histogram (256 bins): constant memory for any upload size, and
+  // the source of the p10/p90 percentiles used for photo contrast.
+  const lumHist = new Uint32Array(256);
   let off = 0;
   let sampled = 0;
 
@@ -116,10 +155,12 @@ export function analysePixels(
   let minY = height;
   let maxY = -1;
 
-  const total = width * height;
-  const step = total > 40_000 ? 4 : 1; // large uploads are sampled, not exhaustively scanned
+  // Tolerate truncated buffers: never read past what the data actually holds.
+  const scanCount = Math.max(0, Math.min(width * height, Math.floor(data.length / 4)));
+  const step = scanCount > 40_000 ? 4 : 1; // large uploads are sampled, not exhaustively scanned
 
-  for (let i = 0; i < data.length; i += 4 * step) {
+  for (let p = 0; p < scanCount; p += step) {
+    const i = p * 4;
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
@@ -134,14 +175,8 @@ export function analysePixels(
     buckets.set(key, bucket);
 
     const lum = relativeLuminance(r, g, b);
-    if (lum > 0.4) {
-      lightSum += lum;
-      lightN++;
-    } else {
-      darkSum += lum;
-      darkN++;
-    }
-
+    const bin = Math.min(255, Math.max(0, Math.round(lum * 255)));
+    lumHist[bin]++;
     sampled++;
     if (palette.length && nearestPaletteDistance(toHex(r, g, b), palette) > PALETTE_DISTANCE_FLOOR) {
       off++;
@@ -156,18 +191,24 @@ export function analysePixels(
     Math.round(dominant.b / dominant.n),
   );
 
-  // Second pass for the content box (pixel stride must match the grid, so a
-  // separate loop is cheaper to reason about than threading indices through).
-  const pixelAt = (x: number, y: number): [number, number, number, number] => {
-    const i = (y * width + x) * 4;
-    return [data[i], data[i + 1], data[i + 2], data[i + 3]];
-  };
+  // Second pass for the content box and the mark's average colour (pixel stride
+  // must match the grid, so a separate loop is cheaper to reason about).
   const bg = hexToRgb(domHex) ?? [255, 255, 255];
+  let mR = 0;
+  let mG = 0;
+  let mB = 0;
+  let mN = 0;
   const xStep = width > 320 ? 2 : 1;
   const yStep = height > 320 ? 2 : 1;
   for (let y = 0; y < height; y += yStep) {
     for (let x = 0; x < width; x += xStep) {
-      const [r, g, b, a] = pixelAt(x, y);
+      const p = y * width + x;
+      if (p >= scanCount) continue;
+      const i = p * 4;
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const a = data[i + 3];
       if (a < 200) continue;
       const d = Math.sqrt((r - bg[0]) ** 2 + (g - bg[1]) ** 2 + (b - bg[2]) ** 2);
       if (d > 40) {
@@ -175,6 +216,10 @@ export function analysePixels(
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
         if (y > maxY) maxY = y;
+        mR += r;
+        mG += g;
+        mB += b;
+        mN++;
       }
     }
   }
@@ -186,12 +231,28 @@ export function analysePixels(
     clearSpaceRatio = contentHeight > 0 ? margin / contentHeight : 0;
   }
 
-  const lightAvg = lightN > total * 0.02 ? lightSum / lightN : null;
-  const darkAvg = darkN > total * 0.02 ? darkSum / darkN : null;
-  const contrastRatio =
-    lightAvg !== null && darkAvg !== null
-      ? (Math.max(lightAvg, darkAvg) + 0.05) / (Math.min(lightAvg, darkAvg) + 0.05)
-      : 10;
+  // Photo contrast: p10/p90 tonal percentiles. Resistant to single-pixel noise,
+  // unlike raw min/max, and null when there is no tonal separation to report.
+  const percentile = (q: number): number => {
+    const target = q * Math.max(1, sampled);
+    let cum = 0;
+    for (let i = 0; i < 256; i++) {
+      cum += lumHist[i];
+      if (cum >= target) return i / 255;
+    }
+    return 1;
+  };
+  let contrastRatio: number | null = null;
+  if (sampled > 0) {
+    const p10 = percentile(0.1);
+    const p90 = percentile(0.9);
+    if (p90 - p10 >= UNIFORM_TONAL_EPS) {
+      contrastRatio = Math.round(((p90 + 0.05) / (p10 + 0.05)) * 100) / 100;
+    }
+  }
+
+  const markColor = mN > 0 ? toHex(Math.round(mR / mN), Math.round(mG / mN), Math.round(mB / mN)) : null;
+  const markContrastRatio = markColor !== null ? contrastRatioOf(markColor, domHex) : null;
 
   const top = sorted.slice(0, 6).map((b) =>
     toHex(Math.round(b.r / b.n), Math.round(b.g / b.n), Math.round(b.b / b.n)),
@@ -202,7 +263,10 @@ export function analysePixels(
     height,
     aspectRatio: height > 0 ? Math.round((width / height) * 100) / 100 : 0,
     palette: top,
-    contrastRatio: Math.round(contrastRatio * 100) / 100,
+    contrastRatio,
+    markContrastRatio,
+    markColor,
+    backgroundColor: domHex,
     offPaletteShare: sampled > 0 ? Math.round((off / sampled) * 1000) / 1000 : 0,
     clearSpaceRatio: Math.round(clearSpaceRatio * 1000) / 1000,
   };
@@ -217,10 +281,15 @@ function pct(n: number): string {
   return `${Math.round(n * 100)}%`;
 }
 
+function variantList(variants: VariantSpec[]): string {
+  return variants.map((v) => `${v.name} ${v.minRatio}–${v.maxRatio}:1`).join(" · ");
+}
+
 /**
  * Evaluate the visual rules against an analysis. Every result carries what was
  * measured and what was required, so a reviewer sees which rules passed,
  * which failed and why — the same evidence standard as the text findings.
+ * Rules whose input is missing are skipped, never guessed.
  */
 export function evaluateImage(
   analysis: ImageAnalysis,
@@ -232,17 +301,35 @@ export function evaluateImage(
   const maxOff = cfg.maxOffPaletteShare ?? DEFAULT_MAX_OFF_PALETTE;
   const minClear = cfg.minClearSpace ?? DEFAULT_MIN_CLEAR_SPACE;
 
-  // Contrast applies to every image.
-  out.push({
-    rule: "contrast",
-    passed: analysis.contrastRatio >= minContrast,
-    measured: `${analysis.contrastRatio.toFixed(2)}:1`,
-    required: `${minContrast.toFixed(1)}:1`,
-    why:
-      analysis.contrastRatio >= minContrast
-        ? `Dominant light and dark tones measure ${analysis.contrastRatio.toFixed(2)}:1, above the ${minContrast.toFixed(1)}:1 floor.`
-        : `Dominant light and dark tones measure ${analysis.contrastRatio.toFixed(2)}:1; WCAG 2.2 AA and the brand book require ${minContrast.toFixed(1)}:1.`,
-  });
+  if (kind === "logo") {
+    // True WCAG ratio between the mark's colour and its background.
+    const ratio = analysis.markContrastRatio;
+    if (ratio !== null && analysis.markColor !== null) {
+      out.push({
+        rule: "contrast",
+        passed: ratio >= minContrast,
+        measured: `${ratio.toFixed(2)}:1 mark vs background`,
+        required: `${minContrast.toFixed(1)}:1 mark vs background`,
+        why:
+          ratio >= minContrast
+            ? `The mark (${analysis.markColor}) on its background (${analysis.backgroundColor}) measures ${ratio.toFixed(2)}:1 under WCAG 2.2 — at or above the ${minContrast.toFixed(1)}:1 floor.`
+            : `The mark (${analysis.markColor}) on its background (${analysis.backgroundColor}) measures only ${ratio.toFixed(2)}:1; WCAG 2.2 AA requires ${minContrast.toFixed(1)}:1 for the lockup to be legible.`,
+      });
+    }
+  } else if (analysis.contrastRatio !== null) {
+    // Tonal-spread heuristic — a legibility proxy for overlay text, not a
+    // text measurement. The evidence states which one it is.
+    out.push({
+      rule: "contrast",
+      passed: analysis.contrastRatio >= minContrast,
+      measured: `${analysis.contrastRatio.toFixed(2)}:1 tonal spread`,
+      required: `${minContrast.toFixed(1)}:1 tonal spread`,
+      why:
+        analysis.contrastRatio >= minContrast
+          ? `The photo's tonal spread (p10 → p90 luminance) measures ${analysis.contrastRatio.toFixed(2)}:1, above ${minContrast.toFixed(1)}:1 — overlay text has a legible range to sit on.`
+          : `The photo's tonal spread measures only ${analysis.contrastRatio.toFixed(2)}:1; overlay text needs ≥ ${minContrast.toFixed(1)}:1 (WCAG 2.2 AA) to stay legible across the image.`,
+    });
+  }
 
   // Palette applies whenever an approved palette is configured.
   if (cfg.palette.length > 0) {
@@ -266,7 +353,7 @@ export function evaluateImage(
         rule: "logo-variant",
         passed: Boolean(match),
         measured: `${analysis.aspectRatio}:1 aspect (${analysis.width}×${analysis.height})`,
-        required: variants.map((v) => `${v.name} ${v.minRatio}–${v.maxRatio}:1`).join(" · "),
+        required: variantList(variants),
         why: match
           ? `The ${analysis.aspectRatio}:1 aspect matches the approved "${match.name}" variant.`
           : `No approved logo variant matches a ${analysis.aspectRatio}:1 aspect; the approved shapes are ${variants.map((v) => `${v.name} (${v.minRatio}–${v.maxRatio}:1)`).join(", ")}.`,
@@ -291,13 +378,17 @@ export function evaluateImage(
  * Rule evaluation from stored intake metadata (what the review page has after
  * the browser analysis) rather than raw pixels. Rules whose input is missing
  * are skipped, never guessed.
+ *
+ * Contract with the intake analyser: contrastRatio is the mark-vs-background
+ * WCAG ratio when kind is "logo", the tonal-spread heuristic when "photo", and
+ * null/absent when contrast was not measurable.
  */
 export function evaluateImageMeta(
   image: {
     name: string;
     kind?: ImageKind;
     palette?: string[];
-    contrastRatio?: number;
+    contrastRatio?: number | null;
     width?: number;
     height?: number;
     aspectRatio?: number;
@@ -312,15 +403,21 @@ export function evaluateImageMeta(
   const out: VisualRuleResult[] = [];
 
   if (typeof image.contrastRatio === "number") {
+    const isLogo = image.kind === "logo";
+    const unit = isLogo ? "mark vs background" : "tonal spread";
     out.push({
       rule: "contrast",
       passed: image.contrastRatio >= minContrast,
-      measured: `${image.contrastRatio.toFixed(2)}:1`,
-      required: `${minContrast.toFixed(1)}:1`,
+      measured: `${image.contrastRatio.toFixed(2)}:1 ${unit}`,
+      required: `${minContrast.toFixed(1)}:1 ${unit}`,
       why:
         image.contrastRatio >= minContrast
-          ? `Measured contrast inside "${image.name}" is ${image.contrastRatio.toFixed(2)}:1, above the ${minContrast.toFixed(1)}:1 floor.`
-          : `Measured contrast inside "${image.name}" is ${image.contrastRatio.toFixed(2)}:1; WCAG 2.2 AA requires ${minContrast.toFixed(1)}:1.`,
+          ? isLogo
+            ? `The mark inside "${image.name}" contrasts with its background at ${image.contrastRatio.toFixed(2)}:1, at or above the ${minContrast.toFixed(1)}:1 WCAG 2.2 AA floor.`
+            : `Measured contrast inside "${image.name}" (tonal spread) is ${image.contrastRatio.toFixed(2)}:1, above the ${minContrast.toFixed(1)}:1 WCAG floor — overlay text has a legible range.`
+          : isLogo
+            ? `The mark inside "${image.name}" contrasts with its background at only ${image.contrastRatio.toFixed(2)}:1; WCAG 2.2 AA requires ${minContrast.toFixed(1)}:1.`
+            : `Measured contrast inside "${image.name}" (tonal spread) is only ${image.contrastRatio.toFixed(2)}:1; overlay text needs ≥ ${minContrast.toFixed(1)}:1 to stay legible.`,
     });
   }
 
@@ -364,10 +461,10 @@ export function evaluateImageMeta(
         rule: "logo-variant",
         passed: Boolean(match),
         measured: `${aspect}:1 aspect`,
-        required: variants.map((v) => `${v.name} ${v.minRatio}–${v.maxRatio}:1`).join(" · "),
+        required: variantList(variants),
         why: match
           ? `"${image.name}" is a ${aspect}:1 mark, matching the approved "${match.name}" variant.`
-          : `"${image.name}" is a ${aspect}:1 mark; no approved variant matches (approved: ${variants.map((v) => `${v.name} ${v.minRatio}–${v.maxRatio}:1`).join(", ")}).`,
+          : `"${image.name}" is a ${aspect}:1 mark; no approved variant matches (approved: ${variantList(variants)}).`,
       });
     }
     if (typeof image.clearSpaceRatio === "number") {

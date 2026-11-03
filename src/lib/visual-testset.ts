@@ -47,7 +47,8 @@ export const VISUAL_CONFIG: VisualRuleConfig = {
   maxOffPaletteShare: 0.1,
   minClearSpace: 0.5,
   // Buckets are disjoint and ordered tightest-first, so a 1:1 mark resolves to
-  // monogram rather than falling into the wider stacked range.
+  // monogram rather than falling into the wider stacked range. Ratios between
+  // 1.16 and 2.19 have no approved variant on purpose.
   variants: [
     { name: "monogram", minRatio: 0.85, maxRatio: 1.15 },
     { name: "stacked", minRatio: 0.5, maxRatio: 0.84 },
@@ -68,31 +69,31 @@ export const VISUAL_TEST_CASES: TestCase[] = [
   {
     id: "palette-offbrand",
     name: "Off-brand magenta campaign",
-    description: "Magenta and cyan artwork — far outside the approved palette.",
+    description: "Magenta artwork on white — far outside the approved palette, but legible.",
     kind: "photo",
     expect: { contrast: true, palette: false },
     build: () =>
-      buffer(160, 100, (x, y) => (x < 90 ? [0xd6, 0x00, 0x6e, 255] : [0x00, 0xc2, 0xc7, 255])),
+      buffer(160, 100, (x, y) => (x < 90 ? [0xd6, 0x00, 0x6e, 255] : [0xff, 0xff, 0xff, 255])),
   },
   {
     id: "contrast-flat",
-    name: "Flat mid-tone overlay",
-    description: "Two similar mid-greys — contrast well under the 4.5:1 floor.",
+    name: "Flat low-contrast field",
+    description: "Two near-identical dark tones — tonal spread far under the 4.5:1 floor.",
     kind: "photo",
     expect: { contrast: false, palette: true },
     build: () =>
-      buffer(160, 100, (x, y) => (y < 50 ? [0x77, 0x7a, 0x76, 255] : [0x84, 0x87, 0x83, 255])),
+      buffer(160, 100, (x, y) => (y < 50 ? [0x2b, 0x2b, 0x2b, 255] : [0x3a, 0x3a, 0x3a, 255])),
   },
   {
     id: "logo-horizontal-ok",
     name: "Horizontal lockup, correct clear space",
-    description: "Wide gold-on-cream wordmark with generous margins.",
+    description: "Deep-green wordmark on cream with generous margins — every rule passes.",
     kind: "logo",
     expect: { contrast: true, palette: true, "logo-variant": true, "clear-space": true },
     build: () =>
       buffer(240, 80, (x, y) => {
         const inMark = y >= 30 && y <= 50 && x >= 40 && x <= 200;
-        return inMark ? [0xc9, 0xa2, 0x27, 255] : [0xf5, 0xf1, 0xe8, 255];
+        return inMark ? [0x1f, 0x3a, 0x2e, 255] : [0xf5, 0xf1, 0xe8, 255];
       }),
   },
   {
@@ -122,9 +123,10 @@ export const VISUAL_TEST_CASES: TestCase[] = [
   {
     id: "logo-offpalette-mark",
     name: "Off-palette logo colour",
-    description: "Bright red mark on cream — palette fails while shape passes.",
+    description:
+      "Bright red mark on cream — palette fails, and red-on-cream measures 4.28:1, under the WCAG floor.",
     kind: "logo",
-    expect: { contrast: true, palette: false, "logo-variant": true, "clear-space": true },
+    expect: { contrast: false, palette: false, "logo-variant": true, "clear-space": true },
     build: () =>
       buffer(240, 80, (x, y) => {
         const inMark = y >= 26 && y <= 54 && x >= 48 && x <= 192;
@@ -134,9 +136,10 @@ export const VISUAL_TEST_CASES: TestCase[] = [
   {
     id: "transparent-canvas",
     name: "Fully transparent canvas",
-    description: "Degenerate input: no opaque pixels must not crash the rules.",
+    description:
+      "Degenerate input: no opaque pixels. Contrast is not measurable, so that rule is skipped — nothing crashes.",
     kind: "photo",
-    expect: { contrast: true, palette: true },
+    expect: { palette: true },
     build: () => buffer(64, 64, () => [0, 0, 0, 0]),
   },
 ];
@@ -145,8 +148,17 @@ export type CaseResult = {
   testCase: TestCase;
   results: VisualRuleResult[];
   matched: boolean;
-  /** Expectations that disagreed with the engine. */
-  mismatches: { rule: string; expected: boolean; actual: boolean }[];
+  /** Expectations that disagreed with the engine, including skipped rules. */
+  mismatches: { rule: string; expected: boolean; actual: boolean | "skipped" }[];
+};
+
+export type AuditFailure = {
+  caseId: string;
+  rule: string;
+  expected: boolean;
+  measured: string;
+  required: string;
+  why: string;
 };
 
 export type AuditSummary = {
@@ -155,13 +167,17 @@ export type AuditSummary = {
   passedRules: number;
   matchedCases: number;
   passRate: number;
-  failures: { caseId: string; rule: string; expected: boolean; measured: string; required: string; why: string }[];
+  failures: AuditFailure[];
 };
 
-/** Run every seeded case through the production analysis + rule code. */
+/**
+ * Run every seeded case through the production analysis + rule code.
+ * An expectation for a rule the engine skipped counts as a failure — the audit
+ * verifies rule coverage, not just outcomes.
+ */
 export function runVisualAudit(): AuditSummary {
   const cases: CaseResult[] = [];
-  const failures: AuditSummary["failures"] = [];
+  const failures: AuditFailure[] = [];
   let totalRules = 0;
   let passedRules = 0;
   let matchedCases = 0;
@@ -170,18 +186,31 @@ export function runVisualAudit(): AuditSummary {
     const { data, width, height } = testCase.build();
     const analysis = analysePixels(data, width, height, VISUAL_CONFIG.palette);
     const results = evaluateImage(analysis, testCase.kind, VISUAL_CONFIG);
+    const ran = new Map(results.map((r) => [r.rule, r]));
 
     const mismatches: CaseResult["mismatches"] = [];
-    for (const result of results) {
-      const expected = testCase.expect[result.rule];
-      if (expected === undefined) continue;
+    for (const [rule, expected] of Object.entries(testCase.expect)) {
+      const result = ran.get(rule as VisualRuleResult["rule"]);
+      if (!result) {
+        // Expected, but the engine skipped it — that is a disagreement too.
+        mismatches.push({ rule, expected, actual: "skipped" });
+        failures.push({
+          caseId: testCase.id,
+          rule,
+          expected,
+          measured: "not evaluated",
+          required: "rule must run",
+          why: `The case expects a "${rule}" result but the engine skipped the rule — missing or degenerate input for this case.`,
+        });
+        continue;
+      }
       totalRules++;
       if (result.passed) passedRules++;
       if (result.passed !== expected) {
-        mismatches.push({ rule: result.rule, expected, actual: result.passed });
+        mismatches.push({ rule, expected, actual: result.passed });
         failures.push({
           caseId: testCase.id,
-          rule: result.rule,
+          rule,
           expected,
           measured: result.measured,
           required: result.required,
@@ -199,7 +228,7 @@ export function runVisualAudit(): AuditSummary {
     totalRules,
     passedRules,
     matchedCases,
-    passRate: totalRules > 0 ? Math.round((matchedCases / cases.length) * 100) : 0,
+    passRate: cases.length > 0 ? Math.round((matchedCases / cases.length) * 100) : 0,
     failures,
   };
 }
