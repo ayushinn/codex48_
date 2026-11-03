@@ -100,6 +100,12 @@ async function main() {
   check("real review reports logo palette, contrast, clear-space and variant violations",
     ["off-palette", "mark", "Clear space", "no approved variant"].every((needle) => visualFindings.some((f: any) => f.why?.includes(needle))),
     visualFindings.map((f: any) => f.why).join(" | ").slice(0, 500));
+  check("each logo finding cites its matching visual clause",
+    visualFindings.some((f: any) => f.why?.includes("mark inside") && f.clauseCode === "GB-4.1") &&
+      visualFindings.some((f: any) => f.why?.includes("off-palette") && f.clauseCode === "GB-4.3") &&
+      visualFindings.filter((f: any) => f.why?.includes("Clear space") || f.why?.includes("approved variant"))
+        .every((f: any) => f.clauseCode === "GB-4.4"),
+    visualFindings.map((f: any) => `${f.clauseCode}: ${f.why}`).join(" | ").slice(0, 500));
   if (visualReview.json?.id) {
     const visualCleanup = await api(`/api/reviews/${visualReview.json.id}`, { method: "DELETE", cookie });
     check("visual e2e review cleaned up", visualCleanup.status === 200, `status=${visualCleanup.status}`);

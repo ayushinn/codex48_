@@ -495,9 +495,9 @@ function checkAccessibility(ctx: Ctx): Candidate[] {
     for (const image of ctx.images) {
       for (const r of evaluateImageMeta(image, cfg)) {
         if (r.passed) continue;
-        // resolveClause falls back to the first accessibility clause for
-        // imported guidelines that lack these codes — same as the other checks.
-        const clause = resolveClause(ctx, "accessibility", ruleClause[r.rule]);
+        // A visual finding must cite its matching visual rule. Do not attach it
+        // to an unrelated accessibility clause when imported guidance omits it.
+        const clause = ctx.clauses.find((candidate) => candidate.code === ruleClause[r.rule]);
         if (!clause) continue;
         out.push({
           checkGroup: "accessibility",

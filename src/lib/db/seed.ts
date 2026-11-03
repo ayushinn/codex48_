@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import {
   auditLog,
   channels,
@@ -489,7 +489,10 @@ export async function seedDemoWorkspace(db: DB): Promise<void> {
   // leaves a workspace but no reviews; guarding on the workspace alone would
   // then skip seeding forever and leave the demo as an empty shell.
   const existingReviews = await db.select().from(reviews);
-  if (existingReviews.length > 0) return;
+  if (existingReviews.length > 0) {
+    await ensureDemoLogoGuideline(db);
+    return;
+  }
   const existingWorkspaces = await db.select().from(workspaces);
   if (existingWorkspaces.length > 0) {
     await clearDemoWorkspace(db);
@@ -638,6 +641,40 @@ export async function seedDemoWorkspace(db: DB): Promise<void> {
     }
     await db.update(reviews).set(patch).where(eq(reviews.id, reviewId));
   }
+}
+
+/** Add the Round 3 logo clause to demo workspaces seeded by an earlier build. */
+async function ensureDemoLogoGuideline(db: DB): Promise<void> {
+  const workspace = (await db.select().from(workspaces).where(eq(workspaces.id, WS)).limit(1))[0];
+  if (!workspace) return;
+  const guide = (await db
+    .select()
+    .from(guidelineVersions)
+    .where(eq(guidelineVersions.workspaceId, WS))
+    .orderBy(desc(guidelineVersions.version))
+    .limit(1))[0];
+  if (!guide) return;
+  const exists = await db
+    .select({ id: clauses.id })
+    .from(clauses)
+    .where(and(eq(clauses.guidelineVersionId, guide.id), eq(clauses.code, "GB-4.4")))
+    .limit(1);
+  if (exists.length) return;
+
+  const rule = CLAUSES.find((clause) => clause.code === "GB-4.4");
+  if (!rule) return;
+  await db.insert(clauses).values({
+    id: randomUUID(),
+    guidelineVersionId: guide.id,
+    code: rule.code,
+    section: rule.section,
+    title: rule.title,
+    body: rule.body,
+    ruleType: rule.ruleType,
+    checkGroup: rule.checkGroup,
+    channel: rule.channel ?? null,
+    config: rule.config ?? {},
+  });
 }
 
 export async function resetDemoWorkspace(db: DB): Promise<void> {
